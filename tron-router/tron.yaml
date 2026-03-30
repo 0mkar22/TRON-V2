@@ -1,0 +1,8 @@
+projects:
+  - repo: "omkar-engineer/tron-daemon"
+    pm_tool: "basecamp"
+    board_id: "987654321"
+    mapping:
+      pull_request_opened: "In Review"
+      pull_request_closed: "Done"
+      branch_created: "In Progress"

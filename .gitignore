@@ -1,0 +1,5 @@
+node_modules/
+.env
+tron-daemon.exe
+tron.log
+.git/tron_task
