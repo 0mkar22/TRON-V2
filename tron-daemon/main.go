@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,52 +21,62 @@ import (
 )
 
 var (
-	activeTaskID    string
-	isPrompting     bool
-	sessionMutex    sync.Mutex
-	lastTrackedFile string
+	activeTaskID   string
+	activeRepoRoot string
+	isPrompting    bool
+	sessionMutex   sync.Mutex
 )
+
+// Helper function to dynamically find the repository root of any modified file
+func getRepoRoot(path string) string {
+	dir := filepath.Dir(path)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
 
 func main() {
 	logFile, err := os.OpenFile("tron.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		log.Fatalf("Failed to open log: %v", err)
 	}
 	defer logFile.Close()
-
 	log.SetOutput(logFile)
-	log.SetFlags(log.Ldate | log.Ltime)
 
-	fmt.Println("👁️  T.R.O.N. Daemon initializing...")
-	log.Println("SYSTEM: T.R.O.N. Daemon Boot Sequence Initiated")
+	targetDir := "."
+	if len(os.Args) > 1 {
+		targetDir = os.Args[1]
+	}
 
-	githook.InstallHook()
+	log.Printf("SYSTEM: T.R.O.N. booting. Watching Workspace: %s", targetDir)
 
 	onFileChange := func(fileName string, action string) {
+		repoRoot := getRepoRoot(fileName)
+		if repoRoot == "" {
+			return
+		} // Ignore files that aren't inside a Git repository
+
 		if strings.HasSuffix(fileName, "HEAD") {
 			sessionMutex.Lock()
-			if activeTaskID != "" {
-				log.Printf("SYSTEM: Branch change detected. Clearing session [%s]", activeTaskID)
-				fmt.Printf("\n🔄 Branch change detected! T.R.O.N. has cleared task %s.\n", activeTaskID)
+			if activeTaskID != "" && activeRepoRoot == repoRoot {
 				_ = beeep.Notify("T.R.O.N. Status", "Branch changed. Task cleared.", "")
-
 				activeTaskID = ""
-				lastTrackedFile = ""
-				githook.ClearTaskState()
+				activeRepoRoot = ""
+				githook.ClearTaskState(repoRoot)
 			}
 			sessionMutex.Unlock()
 			return
 		}
 
 		sessionMutex.Lock()
-
 		if activeTaskID != "" {
-			if fileName != lastTrackedFile {
-				if !strings.HasSuffix(fileName, "tron_task") {
-					log.Printf("TRACKED: Attached modification of [%s] to Task=[%s]", fileName, activeTaskID)
-					lastTrackedFile = fileName
-				}
-			}
 			sessionMutex.Unlock()
 			return
 		}
@@ -75,102 +85,86 @@ func main() {
 			sessionMutex.Unlock()
 			return
 		}
-
 		isPrompting = true
 		sessionMutex.Unlock()
 
-		go func(triggerFile string, triggerAction string) {
-			notifyMsg := fmt.Sprintf("You %s '%s'. Check terminal to link task.", triggerAction, triggerFile)
-			_ = beeep.Notify("T.R.O.N. Intent Detected", notifyMsg, "")
+		go func(rRoot string, tFile string) {
+			_ = beeep.Notify("T.R.O.N. Intent Detected", "File modified. Please link a task.", "")
 
-			fmt.Printf("\n⚡ Intent Detected: You %s '%s'\n", triggerAction, triggerFile)
+			psCommand := `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('File modified! What task/ticket are you working on? (Type IGNORE to skip)', 'T.R.O.N. Watcher', '')`
 
-			reader := bufio.NewReader(os.Stdin)
 			var taskID string
-
 			for {
-				fmt.Print("🛠️  What task/ticket are you working on? (Type 'IGNORE' to skip): ")
-				input, err := reader.ReadString('\n')
+				cmd := exec.Command("powershell", "-Command", psCommand)
+				out, err := cmd.Output()
 				if err != nil {
-					log.Println("ERROR: Failed reading input:", err)
+					taskID = "IGNORE"
+					break
 				}
-
-				taskID = strings.TrimSpace(input)
+				taskID = strings.TrimSpace(string(out))
 				if taskID != "" {
 					break
 				}
-				fmt.Println("⚠️  Task ID cannot be empty. Please enter a valid ID or type 'IGNORE'.")
 			}
 
 			sessionMutex.Lock()
 			activeTaskID = taskID
-			lastTrackedFile = triggerFile
+			activeRepoRoot = rRoot
 			isPrompting = false
 
 			if strings.ToUpper(activeTaskID) != "IGNORE" {
-				githook.WriteTaskState(activeTaskID)
+				// 1. Install the Git Hook
+				githook.InstallHook(rRoot)
+				githook.WriteTaskState(rRoot, activeTaskID)
 
-				go func(tID string) {
-					cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-					out, err := cmd.Output()
+				// 2. ZERO-TOUCH BRANCHING: Automatically create and switch branches
+				branchName := fmt.Sprintf("feature/%s", activeTaskID)
+
+				// Try to create a new branch (-b)
+				gitCmd := exec.Command("git", "-C", rRoot, "checkout", "-b", branchName)
+				err := gitCmd.Run()
+				if err != nil {
+					// If it fails (because the branch already exists), just check it out normally
+					gitCmd = exec.Command("git", "-C", rRoot, "checkout", branchName)
+					_ = gitCmd.Run()
+				}
+
+				fmt.Printf("🌿 Zero-Touch Branching: Switched to %s\n", branchName)
+
+				// 3. Sync with the Cloud Router
+				go func(tID string, rDir string) {
+					cmd := exec.Command("git", "-C", rDir, "config", "--get", "remote.origin.url")
+					out, _ := cmd.Output()
 					repoName := "unknown/repo"
-
-					if err == nil {
-						url := strings.TrimSpace(string(out))
-						url = strings.TrimSuffix(url, ".git")
-						parts := strings.Split(url, "/")
-						if len(parts) >= 2 {
-							repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
-						}
+					url := strings.TrimSpace(string(out))
+					url = strings.TrimSuffix(url, ".git")
+					parts := strings.Split(url, "/")
+					if len(parts) >= 2 {
+						repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
 					}
 
-					payload := map[string]string{
-						"taskId":   tID,
-						"repoName": repoName,
-					}
-					jsonPayload, _ := json.Marshal(payload)
-
-					req, _ := http.NewRequest("POST", "http://localhost:3000/api/start-task", bytes.NewBuffer(jsonPayload))
+					payload, _ := json.Marshal(map[string]string{"taskId": tID, "repoName": repoName})
+					req, _ := http.NewRequest("POST", "http://localhost:3000/api/start-task", bytes.NewBuffer(payload))
 					req.Header.Set("Content-Type", "application/json")
 					req.Header.Set("x-api-key", "super_secret_daemon_key_2026")
-
 					client := &http.Client{}
-					resp, err := client.Do(req)
-					if err != nil || resp.StatusCode != 200 {
-						log.Printf("Warning: Could not sync task start to cloud. Status: %v", err)
-					} else {
-						log.Printf("SYNC: Successfully notified Cloud Router that %s started in %s.", tID, repoName)
-					}
-				}(activeTaskID)
+					client.Do(req)
+				}(activeTaskID, rRoot)
 			}
-
 			sessionMutex.Unlock()
-
-			log.Printf("SESSION LOCKED: Developer bound session to Task=[%s]", activeTaskID)
-			log.Printf("TRACKED: Attached triggering modification of [%s] to Task=[%s]", triggerFile, activeTaskID)
-
-			if strings.ToUpper(activeTaskID) == "IGNORE" {
-				fmt.Println("🔇 Session ignored. I will stop tracking until you change branches.")
-			} else {
-				fmt.Printf("✅ Session linked to %s. I will track your commits in the background.\n", activeTaskID)
-			}
-
-		}(fileName, action)
+		}(repoRoot, fileName)
 	}
 
-	w, err := watcher.Start(".", onFileChange)
+	w, err := watcher.Start(targetDir, onFileChange)
 	if err != nil {
-		fmt.Printf("FATAL ERROR: Failed to start T.R.O.N. watcher: %v\n", err)
 		os.Exit(1)
 	}
 	defer w.Close()
 
-	fmt.Println("✅ T.R.O.N. is actively watching for Create, Update, and Delete changes.")
-
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-
 	<-done
+
 	log.Println("SYSTEM: Received interrupt signal. Shutting down gracefully.")
 	fmt.Println("\n🛑 Shutting down T.R.O.N. watcher safely.")
 }

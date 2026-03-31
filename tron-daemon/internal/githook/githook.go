@@ -6,9 +6,8 @@ import (
 	"path/filepath"
 )
 
-func InstallHook() {
-	hookPath := filepath.Join(".git", "hooks", "prepare-commit-msg")
-
+func InstallHook(repoRoot string) {
+	hookPath := filepath.Join(repoRoot, ".git", "hooks", "prepare-commit-msg")
 	if _, err := os.Stat(hookPath); err == nil {
 		return
 	}
@@ -28,21 +27,18 @@ fi
 `
 	err := os.WriteFile(hookPath, []byte(hookScript), 0755)
 	if err != nil {
-		log.Printf("Warning: Failed to install Git hook: %v", err)
+		log.Printf("Warning: Failed to install Git hook in %s: %v", repoRoot, err)
 	} else {
-		log.Println("SYSTEM: T.R.O.N. Git Hook installed successfully.")
+		log.Printf("SYSTEM: Hook installed in %s", repoRoot)
 	}
 }
 
-func WriteTaskState(taskID string) {
-	stateFile := filepath.Join(".git", "tron_task")
-	err := os.WriteFile(stateFile, []byte(taskID), 0644)
-	if err != nil {
-		log.Printf("Warning: Failed to write task state: %v", err)
-	}
+func WriteTaskState(repoRoot string, taskID string) {
+	stateFile := filepath.Join(repoRoot, ".git", "tron_task")
+	_ = os.WriteFile(stateFile, []byte(taskID), 0644)
 }
 
-func ClearTaskState() {
-	stateFile := filepath.Join(".git", "tron_task")
+func ClearTaskState(repoRoot string) {
+	stateFile := filepath.Join(repoRoot, ".git", "tron_task")
 	_ = os.Remove(stateFile)
 }

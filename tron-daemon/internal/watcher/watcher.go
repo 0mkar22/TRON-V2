@@ -21,22 +21,10 @@ func Start(targetDir string, triggerIntent func(fileName string, action string))
 				if !ok {
 					return
 				}
-
-				isCreate := event.Op&fsnotify.Create == fsnotify.Create
-				isWrite := event.Op&fsnotify.Write == fsnotify.Write
-				isRemove := event.Op&fsnotify.Remove == fsnotify.Remove
-				isRename := event.Op&fsnotify.Rename == fsnotify.Rename
-
-				if isCreate || isWrite || isRemove || isRename {
-					action := "UPDATED"
-					if isCreate {
-						action = "CREATED"
-					} else if isRemove || isRename {
-						action = "DELETED/MOVED"
-					}
+				if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0 {
+					action := "MODIFIED"
 					triggerIntent(event.Name, action)
 				}
-
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -46,32 +34,23 @@ func Start(targetDir string, triggerIntent func(fileName string, action string))
 		}
 	}()
 
-	gitHeadPath := filepath.Join(targetDir, ".git", "HEAD")
-	err = watcher.Add(gitHeadPath)
-	if err != nil {
-		log.Printf("Note: Could not attach to .git/HEAD. Is this a git repo? Error: %v", err)
-	}
-
 	err = filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			if info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == "vendor" {
+			if info.Name() == ".git" {
+				// Watch HEAD for branch changes, but ignore the rest of the noisy .git folder
+				watcher.Add(filepath.Join(path, "HEAD"))
 				return filepath.SkipDir
 			}
-			err = watcher.Add(path)
-			if err != nil {
-				log.Printf("Failed to watch directory %s: %v", path, err)
+			if info.Name() == "node_modules" || info.Name() == "vendor" {
+				return filepath.SkipDir
 			}
+			watcher.Add(path)
 		}
 		return nil
 	})
 
-	if err != nil {
-		watcher.Close()
-		return nil, err
-	}
-
-	return watcher, nil
+	return watcher, err
 }
