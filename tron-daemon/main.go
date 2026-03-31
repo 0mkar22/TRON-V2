@@ -113,43 +113,53 @@ func main() {
 			isPrompting = false
 
 			if strings.ToUpper(activeTaskID) != "IGNORE" {
-				// 1. Install the Git Hook
-				githook.InstallHook(rRoot)
-				githook.WriteTaskState(rRoot, activeTaskID)
+				// 1. Notify user that we are talking to the cloud
+				fmt.Printf("☁️  Sending '%s' to T.R.O.N. Cloud Router to resolve ID...\n", activeTaskID)
 
-				// 2. ZERO-TOUCH BRANCHING: Automatically create and switch branches
-				branchName := fmt.Sprintf("feature/%s", activeTaskID)
-
-				// Try to create a new branch (-b)
-				gitCmd := exec.Command("git", "-C", rRoot, "checkout", "-b", branchName)
-				err := gitCmd.Run()
-				if err != nil {
-					// If it fails (because the branch already exists), just check it out normally
-					gitCmd = exec.Command("git", "-C", rRoot, "checkout", branchName)
-					_ = gitCmd.Run()
+				// Calculate Repo Name
+				cmd := exec.Command("git", "-C", rRoot, "config", "--get", "remote.origin.url")
+				out, _ := cmd.Output()
+				repoName := "unknown/repo"
+				url := strings.TrimSpace(string(out))
+				url = strings.TrimSuffix(url, ".git")
+				parts := strings.Split(url, "/")
+				if len(parts) >= 2 {
+					repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
 				}
 
-				fmt.Printf("🌿 Zero-Touch Branching: Switched to %s\n", branchName)
+				// 2. HTTP POST Request (Synchronous - we wait for the reply!)
+				payload, _ := json.Marshal(map[string]string{"taskInput": activeTaskID, "repoName": repoName})
+				req, _ := http.NewRequest("POST", "http://localhost:3000/api/start-task", bytes.NewBuffer(payload))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("x-api-key", "super_secret_daemon_key_2026")
 
-				// 3. Sync with the Cloud Router
-				go func(tID string, rDir string) {
-					cmd := exec.Command("git", "-C", rDir, "config", "--get", "remote.origin.url")
-					out, _ := cmd.Output()
-					repoName := "unknown/repo"
-					url := strings.TrimSpace(string(out))
-					url = strings.TrimSuffix(url, ".git")
-					parts := strings.Split(url, "/")
-					if len(parts) >= 2 {
-						repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+				client := &http.Client{}
+				resp, err := client.Do(req)
+
+				if err == nil && resp.StatusCode == 200 {
+					// Parse the resolved ID from the Cloud
+					var result map[string]string
+					json.NewDecoder(resp.Body).Decode(&result)
+					resolvedID := result["resolvedId"]
+
+					fmt.Printf("✅ Cloud resolved task to ID: %s\n", resolvedID)
+					activeTaskID = resolvedID // Overwrite their text with the real ID!
+
+					// 3. Install Hooks and Write State using the REAL ID
+					githook.InstallHook(rRoot)
+					githook.WriteTaskState(rRoot, activeTaskID)
+
+					// 4. ZERO-TOUCH BRANCHING
+					branchName := fmt.Sprintf("feature/TASK-%s", activeTaskID)
+					gitCmd := exec.Command("git", "-C", rRoot, "checkout", "-b", branchName)
+					if err := gitCmd.Run(); err != nil {
+						gitCmd = exec.Command("git", "-C", rRoot, "checkout", branchName)
+						_ = gitCmd.Run()
 					}
-
-					payload, _ := json.Marshal(map[string]string{"taskId": tID, "repoName": repoName})
-					req, _ := http.NewRequest("POST", "http://localhost:3000/api/start-task", bytes.NewBuffer(payload))
-					req.Header.Set("Content-Type", "application/json")
-					req.Header.Set("x-api-key", "super_secret_daemon_key_2026")
-					client := &http.Client{}
-					client.Do(req)
-				}(activeTaskID, rRoot)
+					fmt.Printf("🌿 Zero-Touch Branching: Switched to %s\n", branchName)
+				} else {
+					log.Printf("ERROR: Cloud sync failed. Falling back to manual ID tracking.")
+				}
 			}
 			sessionMutex.Unlock()
 		}(repoRoot, fileName)

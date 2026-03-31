@@ -1,9 +1,8 @@
 const axios = require('axios');
 
 const BASECAMP_ACCOUNT_ID = process.env.BASECAMP_ACCOUNT_ID;
-let BASECAMP_ACCESS_TOKEN = process.env.BASECAMP_ACCESS_TOKEN; // Changed to 'let' so we can update it in memory!
+let BASECAMP_ACCESS_TOKEN = process.env.BASECAMP_ACCESS_TOKEN; 
 
-// NEW: Credentials for refreshing
 const REFRESH_TOKEN = process.env.BASECAMP_REFRESH_TOKEN;
 const CLIENT_ID = process.env.BASECAMP_CLIENT_ID;
 const CLIENT_SECRET = process.env.BASECAMP_CLIENT_SECRET;
@@ -46,47 +45,78 @@ async function refreshAccessToken() {
 // ==========================================
 basecampAPI.interceptors.response.use(
     (response) => {
-        // If the request succeeds, just return the response normally
         return response;
     },
     async (error) => {
         const originalRequest = error.config;
 
-        // If Basecamp returns 401 (Unauthorized) AND we haven't already tried to retry this exact request...
         if (error.response && error.response.status === 401 && !originalRequest._retry) {
-            originalRequest._retry = true; // Mark it so we don't get stuck in an infinite loop
+            originalRequest._retry = true; 
 
             try {
-                // 1. Get the new token
                 const newToken = await refreshAccessToken();
                 
-                // 2. Update it in memory for future requests
                 BASECAMP_ACCESS_TOKEN = newToken;
                 basecampAPI.defaults.headers['Authorization'] = `Bearer ${newToken}`;
-                
-                // 3. Update the dead token on the stalled request
                 originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
                 
-                // 4. Replay the original request seamlessly!
                 return basecampAPI(originalRequest);
             } catch (refreshError) {
-                // If the refresh itself fails, we are completely locked out.
                 return Promise.reject(refreshError);
             }
         }
-
-        // If it's a different error (like a 404), just pass it down the chain
         return Promise.reject(error);
     }
 );
 
 // ==========================================
+// AUTO-RESOLVE ENGINE (SEARCH & CREATE)
+// ==========================================
+async function resolveTask(taskInput, boardID, todoColumnID) {
+    console.log(`\n🔍 [BASECAMP ADAPTER] Resolving Task: "${taskInput}"`);
+
+    if (!BASECAMP_ACCESS_TOKEN || BASECAMP_ACCOUNT_ID.includes('here')) {
+        console.warn(`⚠️  [BASECAMP ADAPTER] Simulation Mode. Generating fake ID.`);
+        return `SIM-${Math.floor(Math.random() * 10000)}`;
+    }
+
+    try {
+        const rawIdMatch = taskInput.match(/\d{8,}/);
+        if (rawIdMatch) {
+            console.log(`✅ [BASECAMP ADAPTER] Detected raw ID input. Bypassing search.`);
+            return rawIdMatch[0];
+        }
+
+        const listResponse = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
+        const existingCards = listResponse.data;
+
+        const foundCard = existingCards.find(card => card.title.toLowerCase().includes(taskInput.toLowerCase()));
+        
+        if (foundCard) {
+            console.log(`✅ [BASECAMP ADAPTER] Found existing card! ID: ${foundCard.id}`);
+            return foundCard.id.toString();
+        }
+
+        console.log(`✨ [BASECAMP ADAPTER] Card not found. Auto-creating new ticket: "${taskInput}"`);
+        const createResponse = await basecampAPI.post(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`, {
+            title: taskInput
+        });
+
+        console.log(`✅ [BASECAMP ADAPTER] Successfully created new card! ID: ${createResponse.data.id}`);
+        return createResponse.data.id.toString();
+
+    } catch (error) {
+        console.error(`❌ [BASECAMP ADAPTER] Resolve Engine Failed.`);
+        throw error;
+    }
+}
+
+// ==========================================
 // THE CORE LOGIC (KANBAN CARD TABLE)
 // ==========================================
 async function updateTicketStatus(taskID, newStatus, boardID) {
-    // 1. Basecamp APIs require pure numbers. We must strip "TASK-" from "TASK-123456"
     const pureCardID = taskID.replace(/\D/g, ''); 
-    const destinationColumnID = parseInt(newStatus); // From our tron.yaml
+    const destinationColumnID = parseInt(newStatus); 
 
     console.log(`\n🏕️  [BASECAMP ADAPTER] Connecting to Basecamp Project: ${boardID}`);
     console.log(`🏕️  [BASECAMP ADAPTER] Moving Card [${pureCardID}] to Column ID: [${destinationColumnID}]`);
@@ -97,7 +127,6 @@ async function updateTicketStatus(taskID, newStatus, boardID) {
     }
 
     try {
-        // 2. The Basecamp Card Table "Move" Endpoint
         const response = await basecampAPI.post(`/buckets/${boardID}/card_tables/cards/${pureCardID}/moves.json`, {
             column_id: destinationColumnID 
         });
@@ -115,4 +144,5 @@ async function updateTicketStatus(taskID, newStatus, boardID) {
     }
 }
 
-module.exports = { updateTicketStatus };
+// THE SINGLE, DEFINITIVE EXPORT
+module.exports = { updateTicketStatus, resolveTask };

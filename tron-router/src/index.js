@@ -21,33 +21,46 @@ app.use(express.json({
 app.post('/api/start-task', async (req, res) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== process.env.DAEMON_API_KEY) {
-        console.warn('🚨 Unauthorized attempt to access Daemon API');
         return res.status(401).send({ error: 'Unauthorized' });
     }
 
-    res.status(200).send({ status: 'queued' });
-
-    const { taskId, repoName } = req.body;
-    if (!taskId || !repoName) {
-        console.error('❌ API Error: Missing taskId or repoName in payload');
-        return;
+    const { taskInput, repoName } = req.body;
+    if (!taskInput || !repoName) {
+        return res.status(400).send({ error: 'Missing payload data' });
     }
 
-    console.log(`\n🔥 Local Daemon triggered task start: [${taskId}] for [${repoName}]`);
+    console.log(`\n🔥 Local Daemon requested task resolution for: [${taskInput}] in [${repoName}]`);
 
-    const queueJob = {
-        deliveryId: `local-${Date.now()}`,
-        eventType: 'local_start',
-        payload: {
-            taskId: taskId,
-            repository: { full_name: repoName }
-        }
-    };
+    const projectConfig = globalConfig.projects.find(p => p.repo === repoName);
+    if (!projectConfig) {
+        return res.status(404).send({ error: 'Repository not configured in tron.yaml' });
+    }
 
     try {
+        const pmAdapter = require(`./adapters/${projectConfig.pm_tool}`);
+        const boardID = projectConfig.board_id;
+        const todoColumnID = projectConfig.mapping.todo_column;
+
+        // Wait for the adapter to search/create the ticket!
+        const resolvedTaskID = await pmAdapter.resolveTask(taskInput, boardID, todoColumnID);
+
+        // Queue the background job to move the card to "In Progress"
+        const queueJob = {
+            deliveryId: `local-${Date.now()}`,
+            eventType: 'local_start',
+            payload: {
+                taskId: resolvedTaskID,
+                repository: { full_name: repoName }
+            }
+        };
         await redis.lpush('tron:webhook_queue', JSON.stringify(queueJob));
+
+        // Return the resolved mathematical ID back to the Go Daemon!
+        res.status(200).send({ resolvedId: resolvedTaskID });
+
     } catch (error) {
-        console.error('❌ Failed to push local start event to Redis:', error);
+        console.error('❌ Failed to resolve task:', error);
+        res.status(500).send({ error: 'Failed to resolve task via PM API' });
     }
 });
 

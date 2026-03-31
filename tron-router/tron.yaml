@@ -3,6 +3,7 @@ projects:
     pm_tool: "basecamp"
     board_id: "46353315" # The Basecamp Project ID
     mapping:
+      todo_column: 9641640739         # The ID of your "To Do" Column
       pull_request_opened: 9732495420 # The ID of your "In Review" Column
       pull_request_closed: 9641640742 # The ID of your "Done" Column
       branch_created: 9732496551      # The ID of your "In Progress" Column

@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # 1. The Message Broker
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: always
+
+  # 2. The API Gateway (Cloud Router)
+  tron-api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Pass your local .env file into the container
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379  # <-- Notice we use 'redis' instead of 'localhost' here!
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    command: ["node", "src/index.js"]
+    restart: on-failure
+
+  # 3. The Asynchronous Worker
+  tron-worker:
+    build: .
+    environment:
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    command: ["node", "src/worker.js"]
+    restart: on-failure
