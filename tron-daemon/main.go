@@ -166,6 +166,22 @@ func main() {
 					fmt.Printf("🌿 Zero-Touch Branching: Switched to %s\n", branchName)
 				} else {
 					log.Printf("ERROR: Cloud sync failed. Falling back to manual ID tracking.")
+
+					// 🛡️ QoL UPDATE: Make sure the raw input is Git-safe!
+					safeBranchName := strings.ReplaceAll(strings.TrimSpace(activeTaskID), " ", "-")
+
+					// Install Hooks and Write State
+					githook.InstallHook(rRoot)
+					githook.WriteTaskState(rRoot, safeBranchName)
+
+					// ZERO-TOUCH BRANCHING (Safe Fallback)
+					branchName := fmt.Sprintf("feature/%s", safeBranchName)
+					gitCmd := exec.Command("git", "-C", rRoot, "checkout", "-b", branchName)
+					if err := gitCmd.Run(); err != nil {
+						gitCmd = exec.Command("git", "-C", rRoot, "checkout", branchName)
+						_ = gitCmd.Run()
+					}
+					fmt.Printf("🌿 Zero-Touch Branching (Offline Mode): Switched to %s\n", branchName)
 				}
 			}
 			sessionMutex.Unlock()

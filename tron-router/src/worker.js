@@ -2,6 +2,8 @@ require('dotenv').config();
 const Redis = require('ioredis');
 const loadConfig = require('./config/yamlLoader');
 const basecampAdapter = require('./adapters/basecamp');
+const githubAdapter = require('./adapters/github'); // AI PIPELINE ADAPTER
+const aiAdapter = require('./adapters/ai');
 
 const redis = new Redis(process.env.REDIS_URL);
 const config = loadConfig();
@@ -32,6 +34,9 @@ async function startWorker() {
                 continue;
             }
 
+            // ==========================================
+            // EVENT: PULL REQUEST
+            // ==========================================
             if (job.eventType === 'pull_request') {
                 const prTitle = job.payload.pull_request.title;
                 const action = job.payload.action; 
@@ -53,6 +58,7 @@ async function startWorker() {
                     continue;
                 }
 
+                // --- PHASE 1: PM STATE TRACKING ---
                 try {
                     if (pmTool === 'basecamp') {
                         await basecampAdapter.updateTicketStatus(taskID, newStatus, boardID);
@@ -60,10 +66,45 @@ async function startWorker() {
                         console.log(`❌ Error: Unknown PM Tool "${pmTool}"`);
                     }
                 } catch (adapterError) {
-                    console.error(`🚨 PM API Failed for ${taskID}. Pushing job back to queue!`);
-                    await redis.lpush('tron:webhook_queue', currentJobString);
+                    console.error(`🚨 PM API Failed for ${taskID}.`);
+                    job.retryCount = (job.retryCount || 0) + 1;
+                    
+                    if (job.retryCount < 3) {
+                        console.log(`♻️  Retrying job (${job.retryCount}/3)...`);
+                        await redis.lpush('tron:webhook_queue', JSON.stringify(job));
+                    } else {
+                        console.error(`💀 Job permanently failed after 3 retries. Discarding.`);
+                    }
                 }
 
+                // --- PHASE 2: AI PIPELINE (DIFF SANITIZER & SUMMARIZATION) ---
+                if (action === 'opened') {
+                    const diffUrl = job.payload.pull_request.diff_url;
+                    
+                    console.log(`\n🧠 [AI PIPELINE] PR Opened: "${prTitle}"`);
+                    
+                    try {
+                        // 1. Fetch and Clean the code diff
+                        const sanitizedDiff = await githubAdapter.fetchAndSanitizeDiff(diffUrl);
+                        
+                        // 2. Generate the Executive Summary
+                        const intelligenceReport = await aiAdapter.generateExecutiveSummary(prTitle, sanitizedDiff);
+                        
+                        // 3. Log the final output (Next step: Broadcast this to Slack/Teams!)
+                        console.log(`\n📊 --- FINAL EXECUTIVE REPORT ---`);
+                        console.log(`🏷️  Category: ${intelligenceReport.intent}`);
+                        console.log(`📝 Summary:  ${intelligenceReport.executive_summary}`);
+                        console.log(`🚀 Impact:   ${intelligenceReport.business_impact}`);
+                        console.log(`--------------------------------\n`);
+
+                    } catch (aiError) {
+                        console.error(`❌ [AI PIPELINE] Pipeline failed:`, aiError.message);
+                    }
+                }
+
+            // ==========================================
+            // EVENT: LOCAL DAEMON TASK START
+            // ==========================================
             } else if (job.eventType === 'local_start') {
                 const taskID = job.payload.taskId;
                 const pmTool = projectConfig.pm_tool;
@@ -81,8 +122,15 @@ async function startWorker() {
                         await basecampAdapter.updateTicketStatus(taskID, newStatus, boardID);
                     }
                 } catch (adapterError) {
-                    console.error(`🚨 PM API Failed for ${taskID}. Pushing job back to queue!`);
-                    await redis.lpush('tron:webhook_queue', currentJobString);
+                    console.error(`🚨 PM API Failed for ${taskID}.`);
+                    job.retryCount = (job.retryCount || 0) + 1;
+                    
+                    if (job.retryCount < 3) {
+                        console.log(`♻️  Retrying job (${job.retryCount}/3)...`);
+                        await redis.lpush('tron:webhook_queue', JSON.stringify(job));
+                    } else {
+                        console.error(`💀 Job permanently failed after 3 retries. Discarding.`);
+                    }
                 }
             }
 
@@ -93,3 +141,19 @@ async function startWorker() {
 }
 
 startWorker();
+
+// 🛡️ QoL UPDATE: Graceful Shutdown
+process.on('SIGTERM', async () => {
+    console.log('\n🛑 SIGTERM received. Shutting down worker gracefully...');
+    // Stop accepting new jobs from Redis
+    await redis.quit();
+    console.log('💤 Disconnected from Redis. Exiting process.');
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('\n🛑 SIGINT received. Shutting down worker gracefully...');
+    await redis.quit();
+    console.log('💤 Disconnected from Redis. Exiting process.');
+    process.exit(0);
+});
