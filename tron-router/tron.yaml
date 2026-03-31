@@ -1,5 +1,5 @@
 projects:
-  - repo: "omkar-engineer/tron-daemon"
+  - repo: "0mkar22/TRON-V2"
     pm_tool: "basecamp"
     board_id: "46353315" # The Basecamp Project ID
     mapping:
