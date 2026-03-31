@@ -66,6 +66,13 @@ func main() {
 		if strings.HasSuffix(fileName, "HEAD") {
 			sessionMutex.Lock()
 			if activeTaskID != "" && activeRepoRoot == repoRoot {
+				// 🛡️ THE FIX: Check if the new branch is the one T.R.O.N. just created!
+				headContent, err := os.ReadFile(fileName)
+				if err == nil && strings.Contains(string(headContent), activeTaskID) {
+					sessionMutex.Unlock()
+					return // Ignore the branch change, it was us!
+				}
+
 				_ = beeep.Notify("T.R.O.N. Status", "Branch changed. Task cleared.", "")
 				activeTaskID = ""
 				activeRepoRoot = ""
@@ -94,16 +101,16 @@ func main() {
 			psCommand := `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('File modified! What task/ticket are you working on? (Type IGNORE to skip)', 'T.R.O.N. Watcher', '')`
 
 			var taskID string
-			for {
-				cmd := exec.Command("powershell", "-Command", psCommand)
-				out, err := cmd.Output()
-				if err != nil {
-					taskID = "IGNORE"
-					break
-				}
+			cmd := exec.Command("powershell", "-Command", psCommand)
+			out, err := cmd.Output()
+
+			// 🛡️ THE FIX: If they hit Cancel or submit nothing, just treat it as IGNORE. No loops!
+			if err != nil {
+				taskID = "IGNORE"
+			} else {
 				taskID = strings.TrimSpace(string(out))
-				if taskID != "" {
-					break
+				if taskID == "" {
+					taskID = "IGNORE"
 				}
 			}
 
@@ -177,4 +184,5 @@ func main() {
 
 	log.Println("SYSTEM: Received interrupt signal. Shutting down gracefully.")
 	fmt.Println("\n🛑 Shutting down T.R.O.N. watcher safely.")
+
 }
