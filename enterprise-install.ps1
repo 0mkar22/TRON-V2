@@ -13,7 +13,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # 2. Build the Go Executable
 Write-Host "🔨 Compiling T.R.O.N. Daemon..."
-cd tron-daemon
+Set-Location tron-daemon
 go build -o tron-bg.exe -ldflags "-H=windowsgui" main.go
 
 # 3. Get the exact, immutable cryptographic hash of the compiled binary

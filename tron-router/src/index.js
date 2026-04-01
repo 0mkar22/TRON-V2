@@ -98,6 +98,22 @@ app.post('/webhook', verifyGitHub, async (req, res) => {
     }
 });
 
+app.get('/api/projects', (req, res) => {
+    // 🛡️ SECURITY FIX: Lock down the project list
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== process.env.DAEMON_API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+        const config = loadConfig();
+        const projectNames = config.projects.map(p => p.repo);
+        res.status(200).json({ projects: projectNames });
+    } catch (error) {
+        res.status(500).json({ error: "Failed to load projects" });
+    }
+});
+
 app.listen(port, () => {
     console.log(`\n🌐 T.R.O.N. Cloud Router listening at http://localhost:${port}`);
 });

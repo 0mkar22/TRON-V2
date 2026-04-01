@@ -29,6 +29,9 @@ var (
 	ignoredRepos = make(map[string]int64)
 	lastWrite    = make(map[string]time.Time)
 	sessionMutex sync.Mutex
+	// 🛡️ QoL FIX: Hold the list of connected projects
+	connectedProjectsList string
+	isFetchingProjects    bool
 
 	// 🛡️ ARCHITECTURE FIX: Global Config
 	daemonConfig Config
@@ -118,8 +121,46 @@ func isResolvingMerge(repoRoot string) bool {
 	return false
 }
 
+// 🛡️ QoL FIX: Fetch connected projects from the Cloud Router
+func fetchConnectedProjects() {
+	if isFetchingProjects {
+		return
+	}
+	isFetchingProjects = true
+	defer func() { isFetchingProjects = false }()
+
+	endpoint := fmt.Sprintf("%s/api/projects", strings.TrimSuffix(daemonConfig.CloudURL, "/"))
+	req, _ := http.NewRequest("GET", endpoint, nil)
+	req.Header.Set("x-api-key", daemonConfig.APIKey) // 🛡️ SECURITY FIX: Send the key
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+
+	if err != nil || resp.StatusCode != 200 {
+		connectedProjectsList = "Fetch failed (Offline?)"
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Projects []string `json:"projects"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		// 🛡️ UX FIX: Protect the dialog box from overflowing!
+		if len(result.Projects) > 4 {
+			displayList := strings.Join(result.Projects[:4], ", ")
+			connectedProjectsList = fmt.Sprintf("%s ...and %d more", displayList, len(result.Projects)-4)
+		} else {
+			connectedProjectsList = strings.Join(result.Projects, ", ")
+		}
+	}
+}
+
 func main() {
 	loadConfig() // 🛡️ Load ~/.tron/config.json on boot!
+
+	// 🛡️ QoL FIX: Grab the project list in the background
+	go fetchConnectedProjects()
 
 	logFile, err := os.OpenFile("tron.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
@@ -202,26 +243,39 @@ func main() {
 		isPrompting[repoRoot] = true
 		sessionMutex.Unlock()
 
+		// 🛡️ STATE FIX: Just-In-Time refresh if data is missing or stale
+		if connectedProjectsList == "" || connectedProjectsList == "Fetch failed (Offline?)" {
+			fetchConnectedProjects()
+		}
+
 		// 🚀 TRIGGER PROMPT
 		_ = beeep.Notify("T.R.O.N. Intent Detected", "File modified on untracked branch. Please link a task.", "")
 
-		var rawInput string
+		// 🛡️ QoL UPGRADE: Contextual Dialog Message
+		// We calculate the current repo name to show the developer exactly where they are
+		repoNameOnly := filepath.Base(repoRoot)
+
 		var cmd *exec.Cmd
+		var rawInput string
 
-		msg := "File modified! What task/ticket are you working on? (Type IGNORE to skip)"
-
-		// 🛡️ QoL UPGRADE: Cross-Platform Native UI
 		switch runtime.GOOS {
 		case "windows":
+			// Windows VB InputBox requires specific formatting for newlines
+			msg := fmt.Sprintf("Triggered by: %s`r`n`r`nConnected Projects: %s`r`n`r`nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
 			psCommand := fmt.Sprintf(`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('%s', 'T.R.O.N. Watcher', '')`, msg)
 			cmd = exec.Command("powershell", "-Command", psCommand)
+
 		case "darwin":
-			// macOS uses AppleScript for native popups
+			// macOS AppleScript
+			msg := fmt.Sprintf("Triggered by: %s\\n\\nConnected Projects: %s\\n\\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
 			asCommand := fmt.Sprintf(`set T to text returned of (display dialog "%s" default answer "" with title "T.R.O.N. Watcher")`, msg)
 			cmd = exec.Command("osascript", "-e", asCommand)
+
 		case "linux":
-			// Linux uses Zenity (pre-installed on Ubuntu/Fedora)
+			// Linux Zenity
+			msg := fmt.Sprintf("Triggered by: %s\n\nConnected Projects: %s\n\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
 			cmd = exec.Command("zenity", "--entry", "--title=T.R.O.N. Watcher", fmt.Sprintf("--text=%s", msg))
+
 		default:
 			rawInput = "IGNORE"
 		}
