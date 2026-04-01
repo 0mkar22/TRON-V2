@@ -260,9 +260,11 @@ func main() {
 
 		switch runtime.GOOS {
 		case "windows":
-			// Windows VB InputBox requires specific formatting for newlines
+			// 🛡️ UX FIX: PowerShell requires DOUBLE quotes ("") to evaluate `r`n as actual newlines!
 			msg := fmt.Sprintf("Triggered by: %s`r`n`r`nConnected Projects: %s`r`n`r`nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
-			psCommand := fmt.Sprintf(`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('%s', 'T.R.O.N. Watcher', '')`, msg)
+
+			// Notice the double quotes around "%s" and "T.R.O.N. Watcher" below:
+			psCommand := fmt.Sprintf(`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox("%s", "T.R.O.N. Watcher", "")`, msg)
 			cmd = exec.Command("powershell", "-Command", psCommand)
 
 		case "darwin":
