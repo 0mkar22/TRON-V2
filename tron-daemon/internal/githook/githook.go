@@ -4,18 +4,17 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func InstallHook(repoRoot string) {
 	hookPath := filepath.Join(repoRoot, ".git", "hooks", "prepare-commit-msg")
-	if _, err := os.Stat(hookPath); err == nil {
-		return
-	}
 
-	hookScript := `#!/bin/bash
+	// Our payload, clearly marked so we don't inject it twice
+	hookPayload := `
+# --- T.R.O.N. AUTOMATED TASK TRACKER ---
 TASK_FILE=".git/tron_task"
 COMMIT_MSG_FILE=$1
-
 if [ -f "$TASK_FILE" ]; then
     TASK_ID=$(cat "$TASK_FILE")
     if [ -n "$TASK_ID" ]; then
@@ -24,12 +23,34 @@ if [ -f "$TASK_FILE" ]; then
         fi
     fi
 fi
+# ---------------------------------------
 `
-	err := os.WriteFile(hookPath, []byte(hookScript), 0755)
-	if err != nil {
-		log.Printf("Warning: Failed to install Git hook in %s: %v", repoRoot, err)
+	content, err := os.ReadFile(hookPath)
+	if err == nil {
+		// File already exists! Check if we already injected our code.
+		if strings.Contains(string(content), "T.R.O.N. AUTOMATED TASK TRACKER") {
+			return
+		}
+		// Safely append to the existing hook
+		f, err := os.OpenFile(hookPath, os.O_APPEND|os.O_WRONLY, 0755)
+		if err == nil {
+			defer f.Close()
+			f.WriteString("\n" + hookPayload)
+			log.Printf("SYSTEM: Safely appended hook alongside existing hooks in %s", repoRoot)
+		}
 	} else {
-		log.Printf("SYSTEM: Hook installed in %s", repoRoot)
+		// File doesn't exist, create it from scratch
+		fullScript := "#!/bin/bash\n" + hookPayload
+
+		// 🛡️ QoL FIX: Force Linux line-endings (LF) so Git Bash on Windows doesn't crash!
+		safeScript := strings.ReplaceAll(fullScript, "\r\n", "\n")
+
+		err := os.WriteFile(hookPath, []byte(safeScript), 0755)
+		if err != nil {
+			log.Printf("Warning: Failed to install Git hook: %v", err)
+		} else {
+			log.Printf("SYSTEM: Hook created from scratch in %s", repoRoot)
+		}
 	}
 }
 

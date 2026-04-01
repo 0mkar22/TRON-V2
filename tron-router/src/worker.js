@@ -8,6 +8,9 @@ const aiAdapter = require('./adapters/ai');
 const redis = new Redis(process.env.REDIS_URL);
 const config = loadConfig();
 
+// 🛡️ ARCHITECTURE FIX: Sleep helper for Exponential Backoff
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 console.log('👷 T.R.O.N. Background Worker Booting Up...');
 
 async function startWorker() {
@@ -16,7 +19,8 @@ async function startWorker() {
     while (true) {
         let currentJobString = null;
         try {
-            const [queueName, jobString] = await redis.brpop('tron:webhook_queue', 0);
+            // 🛡️ ARCHITECTURE FIX: Reliable Queue (Move to Processing List)
+            const jobString = await redis.brpoplpush('tron:webhook_queue', 'tron:webhook_processing', 0);
             currentJobString = jobString; 
             const job = JSON.parse(jobString);
 
@@ -69,16 +73,30 @@ async function startWorker() {
                     console.error(`🚨 PM API Failed for ${taskID}.`);
                     job.retryCount = (job.retryCount || 0) + 1;
                     
-                    if (job.retryCount < 3) {
-                        console.log(`♻️  Retrying job (${job.retryCount}/3)...`);
+                    if (job.retryCount <= 3) {
+                        // 🛡️ ARCHITECTURE FIX: Exponential Backoff (2s, 4s, 8s)
+                        const backoffTime = Math.pow(2, job.retryCount) * 1000;
+                        console.log(`⏳ API Overloaded. Applying backoff. Waiting ${backoffTime}ms...`);
+                        await sleep(backoffTime);
+                        
                         await redis.lpush('tron:webhook_queue', JSON.stringify(job));
+                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
                     } else {
-                        console.error(`💀 Job permanently failed after 3 retries. Discarding.`);
+                        console.error(`💀 Job permanently failed. Moving to Dead Letter Queue.`);
+                        await redis.lpush('tron:dead_letters', currentJobString);
+                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
                     }
+                    continue; 
                 }
 
                 // --- PHASE 2: AI PIPELINE (DIFF SANITIZER & SUMMARIZATION) ---
                 if (action === 'opened') {
+                    // 🛡️ QoL FIX: Ignore Draft PRs so we don't waste AI credits on unfinished code!
+                    if (job.payload.pull_request.draft === true) {
+                        console.log(`⏭️  [AI PIPELINE] Skipping Draft PR: "${prTitle}"`);
+                        return; // Exit the loop safely
+                    }
+
                     const diffUrl = job.payload.pull_request.diff_url;
                     
                     console.log(`\n🧠 [AI PIPELINE] PR Opened: "${prTitle}"`);
@@ -95,6 +113,13 @@ async function startWorker() {
                         console.log(`🏷️  Category: ${intelligenceReport.intent}`);
                         console.log(`📝 Summary:  ${intelligenceReport.executive_summary}`);
                         console.log(`🚀 Impact:   ${intelligenceReport.business_impact}`);
+                        
+                        // 🛡️ ARCHITECTURE FIX: The Hallucination Safety Net
+                        if (intelligenceReport.confidence_score < 80) {
+                            console.log(`⚠️  WARNING: AI Confidence is LOW (${intelligenceReport.confidence_score}/100). Requires Human Review!`);
+                        } else {
+                            console.log(`🎯 Confidence: ${intelligenceReport.confidence_score}/100`);
+                        }
                         console.log(`--------------------------------\n`);
 
                     } catch (aiError) {
@@ -125,14 +150,25 @@ async function startWorker() {
                     console.error(`🚨 PM API Failed for ${taskID}.`);
                     job.retryCount = (job.retryCount || 0) + 1;
                     
-                    if (job.retryCount < 3) {
-                        console.log(`♻️  Retrying job (${job.retryCount}/3)...`);
+                    if (job.retryCount <= 3) {
+                        // 🛡️ ARCHITECTURE FIX: Exponential Backoff (2s, 4s, 8s)
+                        const backoffTime = Math.pow(2, job.retryCount) * 1000;
+                        console.log(`⏳ API Overloaded. Applying backoff. Waiting ${backoffTime}ms...`);
+                        await sleep(backoffTime);
+                        
                         await redis.lpush('tron:webhook_queue', JSON.stringify(job));
+                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
                     } else {
-                        console.error(`💀 Job permanently failed after 3 retries. Discarding.`);
+                        console.error(`💀 Job permanently failed. Moving to Dead Letter Queue.`);
+                        await redis.lpush('tron:dead_letters', currentJobString);
+                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
                     }
+                    continue; 
                 }
             }
+
+        // 🛡️ ARCHITECTURE FIX: Job successfully finished! Remove it from processing.
+            await redis.lrem('tron:webhook_processing', 1, currentJobString);
 
         } catch (error) {
             console.error('❌ Critical Worker Error:', error);

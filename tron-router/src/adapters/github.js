@@ -24,6 +24,22 @@ async function fetchAndSanitizeDiff(diffUrl) {
 
         console.log(`🧹 [GITHUB ADAPTER] Sanitizing Monster Diffs...`);
 
+        // 🛡️ SECURITY FIX: The Secret Scrubber (DLP)
+        const secretPatterns = [
+            /(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/g, // AWS Access Keys
+            /-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----\n[\s\S]*?\n-----END \1 PRIVATE KEY-----/g, // SSH/RSA Private Keys
+            /(password|secret|api_key|access_token|client_secret)[ \t]*[:=][ \t]*['"]?[^\s'"]+['"]?/gi // Generic hardcoded secrets
+        ];
+
+        let originalLength = rawDiff.length;
+        secretPatterns.forEach(pattern => {
+            rawDiff = rawDiff.replace(pattern, '[REDACTED_SECRET]');
+        });
+
+        if (rawDiff.length !== originalLength) {
+            console.warn(`🚨 [GITHUB ADAPTER] WARNING: Secrets detected and redacted from PR diff!`);
+        }
+
         // 1. Remove lockfiles (package-lock.json, yarn.lock)
         rawDiff = rawDiff.replace(/diff --git a\/.*(?:package-lock\.json|yarn\.lock)[\s\S]*?(?=diff --git|$)/g, '');
         

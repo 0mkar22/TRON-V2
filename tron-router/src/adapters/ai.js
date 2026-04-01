@@ -32,13 +32,14 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
     RULES:
     1. Do not use overly technical jargon.
     2. Focus on the business value.
-    3. You MUST respond in pure, raw JSON format matching the exact structure below. Do not include markdown blocks, backticks, or any other text.
+    3. You MUST respond in pure, raw JSON format matching the exact structure below.
     
     JSON STRUCTURE:
     {
         "intent": "Feature" | "Bug Fix" | "Refactoring" | "Infrastructure",
         "executive_summary": "A 2-3 sentence human-readable summary of the changes.",
-        "business_impact": "A 1 sentence explanation of how this affects the user or system."
+        "business_impact": "A 1 sentence explanation of how this affects the user.",
+        "confidence_score": <number between 1 and 100 representing how certain you are of this summary>
     }
     `;
 
@@ -74,7 +75,8 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
         return {
             intent: "Unknown",
             executive_summary: `Developer opened PR: ${prTitle}. AI analysis failed or timed out.`,
-            business_impact: "Requires manual review."
+            business_impact: "Requires manual review.",
+            confidence_score: 0 // 🛡️ NEW: Auto-fail the confidence check
         };
     }
 }
