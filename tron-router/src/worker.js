@@ -4,6 +4,7 @@ const loadConfig = require('./config/yamlLoader');
 const basecampAdapter = require('./adapters/basecamp');
 const githubAdapter = require('./adapters/github'); // AI PIPELINE ADAPTER
 const aiAdapter = require('./adapters/ai');
+const messengerAdapter = require('./adapters/messenger');
 
 const redis = new Redis(process.env.REDIS_URL);
 const config = loadConfig();
@@ -121,6 +122,13 @@ async function startWorker() {
                             console.log(`🎯 Confidence: ${intelligenceReport.confidence_score}/100`);
                         }
                         console.log(`--------------------------------\n`);
+
+                        // 📢 PHASE 3: THE CORPORATE MEGAPHONE
+                        // We pull the webhook URL from the project's config in tron.yaml!
+                        const teamWebhookUrl = projectConfig.notification_webhook;
+                        const prUrl = job.payload.pull_request.html_url;
+
+                        await messengerAdapter.broadcastSummary(teamWebhookUrl, prTitle, prUrl, intelligenceReport);
 
                     } catch (aiError) {
                         console.error(`❌ [AI PIPELINE] Pipeline failed:`, aiError.message);

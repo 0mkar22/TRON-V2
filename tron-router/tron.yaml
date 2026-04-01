@@ -2,6 +2,7 @@ projects:
   - repo: "0mkar22/TRON-V2"
     pm_tool: "basecamp"
     board_id: "46353315" # The Basecamp Project ID
+    notification_webhook: "https://hooks.slack.com/services/T000.../B000.../XXXXX" # 📢 Add your Slack/Teams/Discord URL here!
     mapping:
       todo_column: 9641640739         # The ID of your "To Do" Column
       pull_request_opened: 9732495420 # The ID of your "In Review" Column
