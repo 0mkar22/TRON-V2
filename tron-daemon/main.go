@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -28,6 +29,10 @@ var (
 	isPrompting  = make(map[string]bool)
 	ignoredRepos = make(map[string]int64)
 	lastWrite    = make(map[string]time.Time)
+
+	// 🛡️ ARCHITECTURE FIX: The Debounce Tracker
+	lastEventTime = make(map[string]time.Time)
+
 	sessionMutex sync.Mutex
 	// 🛡️ QoL FIX: Hold the list of connected projects
 	connectedProjectsList string
@@ -167,6 +172,10 @@ func main() {
 		log.Fatalf("Failed to open log: %v", err)
 	}
 	defer logFile.Close()
+
+	// 🛡️ UX FIX: Print to BOTH the terminal and the log file!
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(multiWriter)
 	log.SetOutput(logFile)
 
 	targetDir := "."
@@ -181,6 +190,15 @@ func main() {
 		if repoRoot == "" {
 			return
 		}
+
+		// 🛡️ FIX: DEBOUNCE THE ATOMIC SAVE STORM
+		sessionMutex.Lock()
+		if time.Since(lastEventTime[repoRoot]) < 3*time.Second {
+			sessionMutex.Unlock()
+			return // Ignore duplicate rapid-fire events
+		}
+		lastEventTime[repoRoot] = time.Now()
+		sessionMutex.Unlock()
 
 		// 🛡️ QoL FIX: Stay completely silent if they are resolving conflicts!
 		if isResolvingMerge(repoRoot) {
@@ -252,7 +270,6 @@ func main() {
 		_ = beeep.Notify("T.R.O.N. Intent Detected", "File modified on untracked branch. Please link a task.", "")
 
 		// 🛡️ QoL UPGRADE: Contextual Dialog Message
-		// We calculate the current repo name to show the developer exactly where they are
 		repoNameOnly := filepath.Base(repoRoot)
 
 		var cmd *exec.Cmd
@@ -260,21 +277,21 @@ func main() {
 
 		switch runtime.GOOS {
 		case "windows":
-			// 🛡️ UX FIX: PowerShell requires DOUBLE quotes ("") to evaluate `r`n as actual newlines!
-			msg := fmt.Sprintf("Triggered by: %s`r`n`r`nConnected Projects: %s`r`n`r`nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
+			// 🛡️ UX FIX: Bulletproof PowerShell string handling
+			// Strip single quotes just in case, and use native PowerShell NewLines
+			cleanRepo := strings.ReplaceAll(repoNameOnly, "'", "")
+			cleanProjects := strings.ReplaceAll(connectedProjectsList, "'", "")
 
-			// Notice the double quotes around "%s" and "T.R.O.N. Watcher" below:
-			psCommand := fmt.Sprintf(`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox("%s", "T.R.O.N. Watcher", "")`, msg)
-			cmd = exec.Command("powershell", "-Command", psCommand)
+			psCommand := fmt.Sprintf(`[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null; $msg = 'Triggered by: %s' + [Environment]::NewLine + [Environment]::NewLine + 'Connected Projects: %s' + [Environment]::NewLine + [Environment]::NewLine + 'What task/ticket are you working on? (Type IGNORE to skip)'; [Microsoft.VisualBasic.Interaction]::InputBox($msg, 'T.R.O.N. Watcher', '')`, cleanRepo, cleanProjects)
+
+			cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", psCommand)
 
 		case "darwin":
-			// macOS AppleScript
 			msg := fmt.Sprintf("Triggered by: %s\\n\\nConnected Projects: %s\\n\\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
 			asCommand := fmt.Sprintf(`set T to text returned of (display dialog "%s" default answer "" with title "T.R.O.N. Watcher")`, msg)
 			cmd = exec.Command("osascript", "-e", asCommand)
 
 		case "linux":
-			// Linux Zenity
 			msg := fmt.Sprintf("Triggered by: %s\n\nConnected Projects: %s\n\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
 			cmd = exec.Command("zenity", "--entry", "--title=T.R.O.N. Watcher", fmt.Sprintf("--text=%s", msg))
 
@@ -285,6 +302,8 @@ func main() {
 		if cmd != nil {
 			out, err := cmd.Output()
 			if err != nil {
+				// 🛡️ DEBUG FIX: Print the actual PowerShell error to the console!
+				fmt.Printf("❌ UI Prompt crashed: %v\n", err)
 				rawInput = "IGNORE"
 			} else {
 				rawInput = strings.TrimSpace(string(out))
@@ -304,7 +323,6 @@ func main() {
 
 		fmt.Printf("☁️  Sending '%s' to T.R.O.N. Cloud Router to resolve ID...\n", rawInput)
 
-		// Calculate Repo Name
 		cmd = exec.Command("git", "-C", repoRoot, "config", "--get", "remote.origin.url")
 		out, _ := cmd.Output()
 		repoName := "unknown/repo"
@@ -315,18 +333,14 @@ func main() {
 			repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
 		}
 
-		// Cloud Resolution
-		// 🛡️ ARCHITECTURE FIX: Fetch the Immutable ID
 		immutableID := getImmutableRepoID(repoRoot)
 
-		// Cloud Resolution
 		payload, _ := json.Marshal(map[string]string{
 			"taskInput": rawInput,
 			"repoName":  repoName,
-			"repoId":    immutableID, // Safe from repository renames!
+			"repoId":    immutableID,
 		})
 
-		// 🛡️ ARCHITECTURE FIX: Use dynamic Config URL and Key
 		endpoint := fmt.Sprintf("%s/api/start-task", strings.TrimSuffix(daemonConfig.CloudURL, "/"))
 		req, _ := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
 		req.Header.Set("Content-Type", "application/json")
@@ -354,7 +368,6 @@ func main() {
 		isPrompting[repoRoot] = false
 		sessionMutex.Unlock()
 
-		// Write state & Zero-Touch Branching
 		githook.InstallHook(repoRoot)
 		githook.WriteTaskState(repoRoot, finalTaskID)
 
@@ -369,7 +382,8 @@ func main() {
 
 	w, err := watcher.Start(targetDir, onFileChange)
 	if err != nil {
-		os.Exit(1)
+		// 🛡️ DEBUG FIX: Print the actual error before crashing!
+		log.Fatalf("❌ FATAL: Failed to start file watcher: %v", err)
 	}
 	defer w.Close()
 
