@@ -62,4 +62,33 @@ async function fetchAndSanitizeDiff(diffUrl) {
     }
 }
 
-module.exports = { fetchAndSanitizeDiff };
+// 📢 NEW: Post a comment directly to a Pull Request
+async function postPullRequestComment(repoFullName, prNumber, commentBody) {
+    if (!GITHUB_TOKEN) {
+        console.warn("⚠️ GITHUB_ACCESS_TOKEN is missing in .env. Cannot post PR comment.");
+        return;
+    }
+
+    // GitHub's API endpoint for PR comments is actually the Issues endpoint!
+    const url = `https://api.github.com/repos/${repoFullName}/issues/${prNumber}/comments`;
+    
+    const headers = {
+        'Authorization': `Bearer ${GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github.v3+json', // We need JSON for this call, not diff
+        'Content-Type': 'application/json',
+        'User-Agent': 'TRON-AI-Pipeline'
+    };
+
+    try {
+        await axios.post(url, { body: commentBody }, { headers });
+        console.log(`💬 Successfully posted AI review to PR #${prNumber}`);
+    } catch (error) {
+        console.error(`❌ [GITHUB ADAPTER] Failed to post PR comment: ${error.message}`);
+        if (error.response) {
+            console.error(`   -> Details:`, JSON.stringify(error.response.data, null, 2));
+        }
+    }
+}
+
+// Ensure both functions are exported!
+module.exports = { fetchAndSanitizeDiff, postPullRequestComment };

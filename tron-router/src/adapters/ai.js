@@ -16,7 +16,7 @@ const openai = new OpenAI({
 async function generateExecutiveSummary(prTitle, sanitizedDiff) {
     // 🛡️ QoL UPDATE: Don't waste AI credits on empty diffs
     if (!sanitizedDiff || sanitizedDiff.trim().length === 0) {
-        console.log(`⏭️  [AI ADAPTER] Diff is empty after sanitization. Skipping LLM.`);
+        console.log(`\n⏭️  [AI ADAPTER] Diff is empty after sanitization. Skipping LLM.`);
         return {
             intent: "Infrastructure",
             executive_summary: "Automated updates to lockfiles, generated assets, or ignored files.",
@@ -46,20 +46,15 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
 
     try {
         const response = await openai.chat.completions.create({
-            // Let's use a solid, free model available on OpenRouter
             model: "openrouter/free", 
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: `PR Title: ${prTitle}\n\nCode Diff:\n${sanitizedDiff}` }
             ],
-            // Note: Many free OpenRouter models don't support strict JSON mode natively, 
-            // so we rely on the aggressive system prompt above to format it correctly!
             temperature: 0.1 
         });
 
-        // Clean up the response just in case the free model adds markdown backticks
         let rawContent = response.choices[0].message.content.trim();
-        // 🛡️ THE FIX: Extract only the JSON block using Regex
         const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
         if (!jsonMatch) {
             throw new Error("AI did not return a valid JSON structure.");
@@ -76,19 +71,54 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
             intent: "Unknown",
             executive_summary: `Developer opened PR: ${prTitle}. AI analysis failed or timed out.`,
             business_impact: "Requires manual review.",
-            confidence_score: 0 // 🛡️ NEW: Auto-fail the confidence check
+            confidence_score: 0 
         };
     }
 }
 
 // ==========================================
-// 🛡️ NEW: THE WRAPPER FUNCTION FOR TEST SCRIPT & DISCORD
+// 🕵️‍♂️ NEW: THE CODE REVIEWER ENGINE
+// ==========================================
+async function generateCodeReview(sanitizedDiff) {
+    if (!sanitizedDiff || sanitizedDiff.trim().length === 0) return "✅ **No code changes detected.**";
+
+    console.log(`🤖 [AI ADAPTER] Performing deep technical code review...`);
+
+    const reviewPrompt = `
+    You are a strict, senior software engineer performing a technical code review.
+    Review the following Git diff for logic errors, security vulnerabilities, or performance bottlenecks.
+    
+    RULES:
+    1. If the code is perfect, respond ONLY with: "✅ **Code looks solid.** No major issues detected by T.R.O.N."
+    2. If there are issues, list them using Markdown bullet points. 
+    3. Be direct, technical, and helpful. Use code blocks for suggestions.
+    4. Limit your response to the top 3 most critical findings.
+    `;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "openrouter/free", 
+            messages: [
+                { role: "system", content: reviewPrompt },
+                { role: "user", content: `Code Diff:\n${sanitizedDiff}` }
+            ],
+            temperature: 0.3 // Slightly higher for more creative debugging insight
+        });
+
+        return response.choices[0].message.content.trim();
+
+    } catch (error) {
+        console.error(`❌ [AI ADAPTER] Code Review Failed:`, error.message);
+        return "⚠️ T.R.O.N. was unable to generate a code review due to a technical error.";
+    }
+}
+
+// ==========================================
+// 🛡️ THE WRAPPER FUNCTION FOR TEST SCRIPT & DISCORD
 // ==========================================
 async function generateSummary(diffData) {
-    // 1. Call your existing engine with a dummy PR Title
     const aiJsonResult = await generateExecutiveSummary("Manual Diff Test", diffData);
     
-    // 2. Format the JSON into the Markdown string that Discord expects
     return `
 **🎯 Intent:** ${aiJsonResult.intent}
 **💼 Business Impact:** ${aiJsonResult.business_impact}
@@ -97,8 +127,9 @@ async function generateSummary(diffData) {
     `.trim();
 }
 
-// 🛡️ Export BOTH functions so the worker and the test script both function perfectly
+// 🛡️ Export all functions
 module.exports = { 
     generateExecutiveSummary, 
+    generateCodeReview,
     generateSummary 
 };

@@ -87,17 +87,31 @@ async function startWorker() {
 
                 // --- PHASE 2: AI PIPELINE (DIFF SANITIZER & SUMMARIZATION) ---
                 if (action === 'opened') {
-                    // 🛡️ QoL FIX: Ignore Draft PRs so we don't waste AI credits on unfinished code!
                     if (job.payload.pull_request.draft === true) {
                         console.log(`⏭️  [AI PIPELINE] Skipping Draft PR: "${prTitle}"`);
                         continue; 
                     }
 
                     const diffUrl = job.payload.pull_request.diff_url;
-                    console.log(`\n🧠 [AI PIPELINE] Generating Intel for: "${prTitle}"`);
+                    // We need these to post the comment back to GitHub!
+                    const repoFullName = job.payload.repository.full_name; 
+                    const prNumber = job.payload.pull_request.number;
+
+                    console.log(`\n🧠 [AI PIPELINE] Generating Intel & Code Review for: "${prTitle}"`);
                     
                     try {
+                        // 1. Fetch and Clean the code diff
                         const sanitizedDiff = await githubAdapter.fetchAndSanitizeDiff(diffUrl);
+                        
+                        // 🕵️‍♂️ 2. NEW: Generate the Code Review and Post to GitHub!
+                        console.log(`🕵️‍♂️ Analyzing diff for bugs...`);
+                        const codeReview = await aiAdapter.generateCodeReview(sanitizedDiff);
+                        
+                        console.log(`💬 Posting Code Review to GitHub PR #${prNumber}...`);
+                        const commentHeader = `### 🤖 T.R.O.N. Automated Code Review\n\n`;
+                        await githubAdapter.postPullRequestComment(repoFullName, prNumber, commentHeader + codeReview);
+
+                        // 3. Generate the Executive Summary for Management
                         const intelligenceReport = await aiAdapter.generateExecutiveSummary(prTitle, sanitizedDiff);
                         
                         console.log(`\n📊 --- FINAL EXECUTIVE REPORT ---`);
@@ -106,9 +120,11 @@ async function startWorker() {
                         console.log(`🚀 Impact:   ${intelligenceReport.business_impact}`);
                         console.log(`--------------------------------\n`);
 
+                        // 4. Broadcast the Summary to Discord (Later: Slack/Teams)
                         const teamWebhookUrl = projectConfig.notification_webhook;
                         const prUrl = job.payload.pull_request.html_url;
 
+                        // Ensure we are passing the intelligenceReport we just generated!
                         await messengerAdapter.broadcastSummary(teamWebhookUrl, prTitle, prUrl, intelligenceReport);
 
                     } catch (aiError) {
@@ -161,7 +177,15 @@ async function startWorker() {
             } else if (job.eventType === 'push' || job.eventType === 'create') {
                 const ref = job.payload.ref || "";
                 
-                // Ignore pushes that aren't to actual branches
+                // 🛡️ THE FIX: If the branch was deleted, STOP immediately.
+                // Do not move the ticket back to In Progress.
+                if (job.payload.deleted === true) {
+                    console.log(`🗑️  [BRANCH EVENT] Branch deleted. Ignoring to prevent ticket rewind.`);
+                    await redis.lrem('tron:webhook_processing', 1, currentJobString);
+                    continue; 
+                }
+
+                // Ignore pushes that aren't to actual branches (like tags)
                 if (job.eventType === 'push' && !ref.startsWith('refs/heads/')) {
                     console.log(`⏭️  Skipping non-branch push: ${ref}`);
                 } else {
