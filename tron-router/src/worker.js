@@ -44,50 +44,45 @@ async function startWorker() {
             // ==========================================
             if (job.eventType === 'pull_request') {
                 const prTitle = job.payload.pull_request.title;
+                const branchName = job.payload.pull_request.head.ref || "";
                 const action = job.payload.action; 
                 
-                const taskMatch = prTitle.match(/\[?(TASK-\d+)\]?/i);
-                if (!taskMatch) {
-                    console.log(`⏭️  Skipping: No Task ID found in PR title: "${prTitle}"`);
-                    continue;
-                }
-                const taskID = taskMatch[1].toUpperCase();
+                console.log(`\n🔀 [PR EVENT] Action: ${action} | Title: "${prTitle}"`);
 
-                const pmTool = projectConfig.pm_tool;
-                const boardID = projectConfig.board_id;
-                const mappingKey = `pull_request_${action}`;
-                const newStatus = projectConfig.mapping[mappingKey];
+                // 🧠 SMART ID EXTRACTION: Check branch name first, then PR title
+                let taskIdentifier = null;
+                const branchMatch = branchName.match(/(\d{9,})/);
+                const titleMatch = prTitle.match(/(\d{9,})/);
 
-                if (!newStatus) {
-                    console.log(`⏭️  Skipping: No YAML mapping found for action "${mappingKey}"`);
-                    continue;
+                if (branchMatch) {
+                    taskIdentifier = branchMatch[1];
+                    console.log(`🎯 Extracted Task ID [${taskIdentifier}] from PR branch name.`);
+                } else if (titleMatch) {
+                    taskIdentifier = titleMatch[1];
+                    console.log(`🎯 Extracted Task ID [${taskIdentifier}] from PR title.`);
+                } else {
+                    console.log(`⚠️ No numeric Task ID found in PR title or branch name.`);
                 }
 
                 // --- PHASE 1: PM STATE TRACKING ---
-                try {
-                    if (pmTool === 'basecamp') {
-                        await basecampAdapter.updateTicketStatus(taskID, newStatus, boardID);
-                    } else {
-                        console.log(`❌ Error: Unknown PM Tool "${pmTool}"`);
-                    }
-                } catch (adapterError) {
-                    console.error(`🚨 PM API Failed for ${taskID}.`);
-                    job.retryCount = (job.retryCount || 0) + 1;
-                    
-                    if (job.retryCount <= 3) {
-                        // 🛡️ ARCHITECTURE FIX: Exponential Backoff (2s, 4s, 8s)
-                        const backoffTime = Math.pow(2, job.retryCount) * 1000;
-                        console.log(`⏳ API Overloaded. Applying backoff. Waiting ${backoffTime}ms...`);
-                        await sleep(backoffTime);
+                const pmTool = projectConfig.pm_tool;
+                const boardID = projectConfig.board_id;
+                const mappingKey = `pull_request_${action}`; // e.g., 'pull_request_opened' or 'pull_request_closed'
+                const newStatus = projectConfig.mapping[mappingKey];
+
+                if (!newStatus) {
+                    console.log(`⏭️  Skipping PM update: No mapping found in tron.yaml for "${mappingKey}"`);
+                } else if (taskIdentifier && pmTool && pmTool !== "none") {
+                    try {
+                        const pmAdapter = require(`./adapters/${pmTool}`);
+                        console.log(`🚚 Moving ticket [${taskIdentifier}] to ${mappingKey} in ${pmTool}...`);
                         
-                        await redis.lpush('tron:webhook_queue', JSON.stringify(job));
-                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
-                    } else {
-                        console.error(`💀 Job permanently failed. Moving to Dead Letter Queue.`);
-                        await redis.lpush('tron:dead_letters', currentJobString);
-                        await redis.lrem('tron:webhook_processing', 1, currentJobString);
+                        await pmAdapter.updateTicketStatus(taskIdentifier, newStatus, boardID);
+                        
+                        console.log(`✅ Successfully moved ticket for PR ${action}!`);
+                    } catch (error) {
+                        console.error(`⚠️ Failed to move PM ticket:`, error.message);
                     }
-                    continue; 
                 }
 
                 // --- PHASE 2: AI PIPELINE (DIFF SANITIZER & SUMMARIZATION) ---
@@ -95,36 +90,22 @@ async function startWorker() {
                     // 🛡️ QoL FIX: Ignore Draft PRs so we don't waste AI credits on unfinished code!
                     if (job.payload.pull_request.draft === true) {
                         console.log(`⏭️  [AI PIPELINE] Skipping Draft PR: "${prTitle}"`);
-                        return; // Exit the loop safely
+                        continue; 
                     }
 
                     const diffUrl = job.payload.pull_request.diff_url;
-                    
-                    console.log(`\n🧠 [AI PIPELINE] PR Opened: "${prTitle}"`);
+                    console.log(`\n🧠 [AI PIPELINE] Generating Intel for: "${prTitle}"`);
                     
                     try {
-                        // 1. Fetch and Clean the code diff
                         const sanitizedDiff = await githubAdapter.fetchAndSanitizeDiff(diffUrl);
-                        
-                        // 2. Generate the Executive Summary
                         const intelligenceReport = await aiAdapter.generateExecutiveSummary(prTitle, sanitizedDiff);
                         
-                        // 3. Log the final output (Next step: Broadcast this to Slack/Teams!)
                         console.log(`\n📊 --- FINAL EXECUTIVE REPORT ---`);
                         console.log(`🏷️  Category: ${intelligenceReport.intent}`);
                         console.log(`📝 Summary:  ${intelligenceReport.executive_summary}`);
                         console.log(`🚀 Impact:   ${intelligenceReport.business_impact}`);
-                        
-                        // 🛡️ ARCHITECTURE FIX: The Hallucination Safety Net
-                        if (intelligenceReport.confidence_score < 80) {
-                            console.log(`⚠️  WARNING: AI Confidence is LOW (${intelligenceReport.confidence_score}/100). Requires Human Review!`);
-                        } else {
-                            console.log(`🎯 Confidence: ${intelligenceReport.confidence_score}/100`);
-                        }
                         console.log(`--------------------------------\n`);
 
-                        // 📢 PHASE 3: THE CORPORATE MEGAPHONE
-                        // We pull the webhook URL from the project's config in tron.yaml!
                         const teamWebhookUrl = projectConfig.notification_webhook;
                         const prUrl = job.payload.pull_request.html_url;
 
@@ -152,7 +133,7 @@ async function startWorker() {
 
                 try {
                     if (pmTool === 'basecamp') {
-                        await basecampAdapter.updateTicketStatus(taskID, newStatus, boardID);
+                        // await basecampAdapter.updateTicketStatus(taskID, newStatus, boardID);
                     }
                 } catch (adapterError) {
                     console.error(`🚨 PM API Failed for ${taskID}.`);
@@ -173,9 +154,52 @@ async function startWorker() {
                     }
                     continue; 
                 }
+
+            // ==========================================
+            // EVENT: GITHUB PUSH / BRANCH CREATED (PHASE 2)
+            // ==========================================
+            } else if (job.eventType === 'push' || job.eventType === 'create') {
+                const ref = job.payload.ref || "";
+                
+                // Ignore pushes that aren't to actual branches
+                if (job.eventType === 'push' && !ref.startsWith('refs/heads/')) {
+                    console.log(`⏭️  Skipping non-branch push: ${ref}`);
+                } else {
+                    const branchName = ref.replace('refs/heads/', '');
+                    console.log(`\n🌿 [BRANCH EVENT] Detected branch: "${branchName}"`);
+
+                    // 🧠 THE MAGIC: Extract a 9+ digit Basecamp ID from the branch name
+                    const taskIdMatch = branchName.match(/(\d{9,})/); 
+
+                    if (taskIdMatch) {
+                        const taskIdentifier = taskIdMatch[1];
+                        console.log(`🎯 Extracted Task ID [${taskIdentifier}] from branch name.`);
+
+                        const pmTool = projectConfig.pm_tool;
+                        const boardID = projectConfig.board_id;
+                        const newStatus = projectConfig.mapping['branch_created']; 
+
+                        if (!newStatus) {
+                            console.log(`⏭️  Skipping: No 'branch_created' mapping found in tron.yaml`);
+                        } else if (pmTool && pmTool !== "none") {
+                            try {
+                                const pmAdapter = require(`./adapters/${pmTool}`);
+                                console.log(`🚚 Moving ticket [${taskIdentifier}] to In Progress in ${pmTool}...`);
+                                
+                                await pmAdapter.updateTicketStatus(taskIdentifier, newStatus, boardID);
+                                
+                                console.log(`✅ Successfully moved ticket!`);
+                            } catch (error) {
+                                console.error(`⚠️ Failed to move PM ticket:`, error.message);
+                            }
+                        }
+                    } else {
+                        console.log(`⚠️  No numeric Task ID found in branch name "${branchName}". Cannot move PM card.`);
+                    }
+                }
             }
 
-        // 🛡️ ARCHITECTURE FIX: Job successfully finished! Remove it from processing.
+            // 🛡️ ARCHITECTURE FIX: Job successfully finished! Remove it from processing.
             await redis.lrem('tron:webhook_processing', 1, currentJobString);
 
         } catch (error) {

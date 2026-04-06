@@ -20,7 +20,8 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
         return {
             intent: "Infrastructure",
             executive_summary: "Automated updates to lockfiles, generated assets, or ignored files.",
-            business_impact: "No direct user impact. Routine maintenance."
+            business_impact: "No direct user impact. Routine maintenance.",
+            confidence_score: 100
         };
     }
     console.log(`\n🤖 [AI ADAPTER] Analyzing code diff via OpenRouter for PR: "${prTitle}"...`);
@@ -58,7 +59,6 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
 
         // Clean up the response just in case the free model adds markdown backticks
         let rawContent = response.choices[0].message.content.trim();
-        // rawContent = rawContent.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         // 🛡️ THE FIX: Extract only the JSON block using Regex
         const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
         if (!jsonMatch) {
@@ -81,4 +81,24 @@ async function generateExecutiveSummary(prTitle, sanitizedDiff) {
     }
 }
 
-module.exports = { generateExecutiveSummary };
+// ==========================================
+// 🛡️ NEW: THE WRAPPER FUNCTION FOR TEST SCRIPT & DISCORD
+// ==========================================
+async function generateSummary(diffData) {
+    // 1. Call your existing engine with a dummy PR Title
+    const aiJsonResult = await generateExecutiveSummary("Manual Diff Test", diffData);
+    
+    // 2. Format the JSON into the Markdown string that Discord expects
+    return `
+**🎯 Intent:** ${aiJsonResult.intent}
+**💼 Business Impact:** ${aiJsonResult.business_impact}
+**📝 Summary:** ${aiJsonResult.executive_summary}
+**🛡️ Confidence Score:** ${aiJsonResult.confidence_score || 0}/100
+    `.trim();
+}
+
+// 🛡️ Export BOTH functions so the worker and the test script both function perfectly
+module.exports = { 
+    generateExecutiveSummary, 
+    generateSummary 
+};
