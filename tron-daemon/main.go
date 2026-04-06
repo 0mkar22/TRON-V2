@@ -23,22 +23,17 @@ import (
 	"github.com/gen2brain/beeep"
 )
 
-// 🛡️ QoL UPGRADE: Multi-Repo State Management
 var (
-	activeTasks  = make(map[string]string)
-	isPrompting  = make(map[string]bool)
-	ignoredRepos = make(map[string]int64)
-	lastWrite    = make(map[string]time.Time)
-
-	// 🛡️ ARCHITECTURE FIX: The Debounce Tracker
+	activeTasks   = make(map[string]string)
+	isPrompting   = make(map[string]bool)
+	ignoredRepos  = make(map[string]int64)
+	lastWrite     = make(map[string]time.Time)
 	lastEventTime = make(map[string]time.Time)
+	sessionMutex  sync.Mutex
 
-	sessionMutex sync.Mutex
-	// 🛡️ QoL FIX: Hold the list of connected projects
-	connectedProjectsList string
-	isFetchingProjects    bool
+	// 🛡️ NEW: Ticket storage for the active repo
+	activeTicketList string
 
-	// 🛡️ ARCHITECTURE FIX: Global Config
 	daemonConfig Config
 )
 
@@ -47,13 +42,20 @@ type Config struct {
 	APIKey   string `json:"api_key"`
 }
 
-// 🛡️ ARCHITECTURE FIX: Load or Create ~/.tron/config.json
+type Ticket struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+type TicketResponse struct {
+	Tickets []Ticket `json:"tickets"`
+}
+
 func loadConfig() {
 	homeDir, _ := os.UserHomeDir()
 	configDir := filepath.Join(homeDir, ".tron")
 	configPath := filepath.Join(configDir, "config.json")
 
-	// If config doesn't exist, create a default one
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		os.MkdirAll(configDir, 0755)
 		defaultConfig := Config{
@@ -66,14 +68,70 @@ func loadConfig() {
 		return
 	}
 
-	// Read existing config
 	file, err := os.ReadFile(configPath)
 	if err == nil {
 		json.Unmarshal(file, &daemonConfig)
 	}
 }
 
-// 🛡️ ARCHITECTURE FIX: The Immutable Repository ID (First Commit Hash)
+// 🛡️ NEW: Fetch real-time Basecamp tickets for the specific repository
+func fetchProjectTickets(repoName string) string {
+	// 🛡️ FIX 1: Ensure we URL-encode the repo name (replaces / with %2F)
+	encodedRepo := strings.ReplaceAll(repoName, "/", "%2F")
+
+	// 🛡️ FIX 2: Construct the exact URL that worked in Postman
+	baseURL := strings.TrimSuffix(daemonConfig.CloudURL, "/")
+	endpoint := fmt.Sprintf("%s/api/project/%s/tickets", baseURL, encodedRepo)
+
+	log.Printf("DEBUG: Fetching tickets from: %s", endpoint)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return "⚠️  Internal Daemon Error"
+	}
+
+	// 🛡️ FIX 3: Ensure the API Key header is EXACTLY what Postman used
+	req.Header.Set("x-api-key", daemonConfig.APIKey)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		log.Printf("❌ Network Error: %v", err)
+		return "⚠️  Unable to fetch tickets (Network Error)"
+	}
+	defer resp.Body.Close()
+
+	// 🛡️ FIX 4: Handle Unauthorized or Not Found errors specifically
+	if resp.StatusCode == 401 {
+		return "⚠️  Invalid API Key (Unauthorized)"
+	}
+	if resp.StatusCode == 404 {
+		return "⚠️  Repo not found in tron.yaml"
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Sprintf("⚠️  Cloud Error (Status: %d)", resp.StatusCode)
+	}
+
+	var result TicketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "⚠️  Error parsing ticket list."
+	}
+
+	if len(result.Tickets) == 0 {
+		return "No active tickets found in To-Do column."
+	}
+
+	var builder strings.Builder
+	builder.WriteString("--- ACTIVE BASECAMP TICKETS ---\n")
+	for i, t := range result.Tickets {
+		// Use a single \n here
+		builder.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, t.ID, t.Title))
+	}
+	builder.WriteString("------------------------------------------\n")
+	return builder.String()
+}
+
 func getImmutableRepoID(repoRoot string) string {
 	cmd := exec.Command("git", "-C", repoRoot, "rev-list", "--max-parents=0", "HEAD")
 	out, err := cmd.Output()
@@ -83,7 +141,6 @@ func getImmutableRepoID(repoRoot string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// Helper: Dynamically find the repository root
 func getRepoRoot(path string) string {
 	dir := filepath.Dir(path)
 	for {
@@ -98,7 +155,18 @@ func getRepoRoot(path string) string {
 	}
 }
 
-// 🛡️ QoL UPGRADE: Branch Sniffer to cure Context Amnesia
+func getRepoNameFromGit(repoRoot string) string {
+	cmd := exec.Command("git", "-C", repoRoot, "config", "--get", "remote.origin.url")
+	out, _ := cmd.Output()
+	url := strings.TrimSpace(string(out))
+	url = strings.TrimSuffix(url, ".git")
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	return "unknown/repo"
+}
+
 func getCurrentBranch(repoRoot string) string {
 	cmd := exec.Command("git", "-C", repoRoot, "branch", "--show-current")
 	out, err := cmd.Output()
@@ -108,64 +176,19 @@ func getCurrentBranch(repoRoot string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// 🛡️ QoL FIX: Detect if the developer is trapped in a Merge Conflict or Rebase
 func isResolvingMerge(repoRoot string) bool {
 	gitDir := filepath.Join(repoRoot, ".git")
-	if _, err := os.Stat(filepath.Join(gitDir, "MERGE_HEAD")); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(gitDir, "REBASE_HEAD")); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
-		return true
+	files := []string{"MERGE_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply"}
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(gitDir, f)); err == nil {
+			return true
+		}
 	}
 	return false
 }
 
-// 🛡️ QoL FIX: Fetch connected projects from the Cloud Router
-func fetchConnectedProjects() {
-	if isFetchingProjects {
-		return
-	}
-	isFetchingProjects = true
-	defer func() { isFetchingProjects = false }()
-
-	endpoint := fmt.Sprintf("%s/api/projects", strings.TrimSuffix(daemonConfig.CloudURL, "/"))
-	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.Header.Set("x-api-key", daemonConfig.APIKey) // 🛡️ SECURITY FIX: Send the key
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-
-	if err != nil || resp.StatusCode != 200 {
-		connectedProjectsList = "Fetch failed (Offline?)"
-		return
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Projects []string `json:"projects"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-		// 🛡️ UX FIX: Protect the dialog box from overflowing!
-		if len(result.Projects) > 4 {
-			displayList := strings.Join(result.Projects[:4], ", ")
-			connectedProjectsList = fmt.Sprintf("%s ...and %d more", displayList, len(result.Projects)-4)
-		} else {
-			connectedProjectsList = strings.Join(result.Projects, ", ")
-		}
-	}
-}
-
 func main() {
-	loadConfig() // 🛡️ Load ~/.tron/config.json on boot!
-
-	// 🛡️ QoL FIX: Grab the project list in the background
-	go fetchConnectedProjects()
+	loadConfig()
 
 	logFile, err := os.OpenFile("tron.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
@@ -173,10 +196,8 @@ func main() {
 	}
 	defer logFile.Close()
 
-	// 🛡️ UX FIX: Print to BOTH the terminal and the log file!
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 	log.SetOutput(multiWriter)
-	log.SetOutput(logFile)
 
 	targetDir := "."
 	if len(os.Args) > 1 {
@@ -191,33 +212,26 @@ func main() {
 			return
 		}
 
-		// 🛡️ FIX: DEBOUNCE THE ATOMIC SAVE STORM
 		sessionMutex.Lock()
 		if time.Since(lastEventTime[repoRoot]) < 3*time.Second {
 			sessionMutex.Unlock()
-			return // Ignore duplicate rapid-fire events
+			return
 		}
 		lastEventTime[repoRoot] = time.Now()
 		sessionMutex.Unlock()
 
-		// 🛡️ QoL FIX: Stay completely silent if they are resolving conflicts!
 		if isResolvingMerge(repoRoot) {
 			return
 		}
 
 		currentBranch := getCurrentBranch(repoRoot)
-
 		sessionMutex.Lock()
 
-		// 🧠 CURE AMNESIA: Are we already on a T.R.O.N. branch?
 		if strings.HasPrefix(currentBranch, "feature/TASK-") {
 			taskID := strings.TrimPrefix(currentBranch, "feature/TASK-")
 			activeTasks[repoRoot] = taskID
-
-			// 🛡️ QoL FIX: Throttle the "Save All" bombardment!
 			if time.Since(lastWrite[repoRoot]) > 2*time.Second {
 				lastWrite[repoRoot] = time.Now()
-				// Silently ensure the hook and state file exist so commits work
 				go func() {
 					githook.InstallHook(repoRoot)
 					githook.WriteTaskState(repoRoot, taskID)
@@ -226,74 +240,52 @@ func main() {
 			sessionMutex.Unlock()
 			return
 		}
-		// 🛡️ QoL FIX: The 1-Hour Snooze Button
+
 		if snoozeTime, exists := ignoredRepos[repoRoot]; exists {
-			if time.Now().Unix()-snoozeTime < 3600 { // 3600 seconds = 1 hour
+			if time.Now().Unix()-snoozeTime < 3600 {
 				sessionMutex.Unlock()
 				return
-			} else {
-				// Snooze expired!
-				delete(ignoredRepos, repoRoot)
 			}
+			delete(ignoredRepos, repoRoot)
 		}
 
-		// 🧹 CLEANUP: Did we just check out 'main' or a non-task branch?
-		if strings.HasSuffix(fileName, "HEAD") {
-			if activeTasks[repoRoot] != "" && !strings.HasPrefix(currentBranch, "feature/TASK-") {
-				_ = beeep.Notify("T.R.O.N. Status", "Switched off task branch. Task tracking suspended.", "")
-				delete(activeTasks, repoRoot)
-				githook.ClearTaskState(repoRoot)
-			}
+		if activeTasks[repoRoot] != "" || isPrompting[repoRoot] {
 			sessionMutex.Unlock()
 			return
 		}
 
-		// 🛡️ MULTI-REPO FIX: Check if we are already tracking THIS specific repo
-		if activeTasks[repoRoot] != "" {
-			sessionMutex.Unlock()
-			return
-		}
-
-		if isPrompting[repoRoot] {
-			sessionMutex.Unlock()
-			return
-		}
 		isPrompting[repoRoot] = true
 		sessionMutex.Unlock()
 
-		// 🛡️ STATE FIX: Just-In-Time refresh if data is missing or stale
-		if connectedProjectsList == "" || connectedProjectsList == "Fetch failed (Offline?)" {
-			fetchConnectedProjects()
-		}
+		_ = beeep.Notify("T.R.O.N. Intent Detected", "Syncing tickets with Basecamp...", "")
 
-		// 🚀 TRIGGER PROMPT
-		_ = beeep.Notify("T.R.O.N. Intent Detected", "File modified on untracked branch. Please link a task.", "")
+		// 🚀 FETCH TICKETS LIVE
+		repoName := getRepoNameFromGit(repoRoot)
+		ticketList := fetchProjectTickets(repoName)
 
-		// 🛡️ QoL UPGRADE: Contextual Dialog Message
 		repoNameOnly := filepath.Base(repoRoot)
-
 		var cmd *exec.Cmd
 		var rawInput string
 
 		switch runtime.GOOS {
 		case "windows":
-			// 🛡️ UX FIX: Bulletproof PowerShell string handling
-			// Strip single quotes just in case, and use native PowerShell NewLines
 			cleanRepo := strings.ReplaceAll(repoNameOnly, "'", "")
-			cleanProjects := strings.ReplaceAll(connectedProjectsList, "'", "")
-
-			psCommand := fmt.Sprintf(`[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null; $msg = 'Triggered by: %s' + [Environment]::NewLine + [Environment]::NewLine + 'Connected Projects: %s' + [Environment]::NewLine + [Environment]::NewLine + 'What task/ticket are you working on? (Type IGNORE to skip)'; [Microsoft.VisualBasic.Interaction]::InputBox($msg, 'T.R.O.N. Watcher', '')`, cleanRepo, cleanProjects)
+			// We use @' '@ (Here-String) to preserve the structure of the ticketList
+			psCommand := fmt.Sprintf(`
+				[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null;
+				$menu = @'
+%s
+'@;
+				$msg = "Repo: %s" + [Environment]::NewLine + [Environment]::NewLine + $menu + [Environment]::NewLine + "Enter Ticket ID or New Task Name:";
+				[Microsoft.VisualBasic.Interaction]::InputBox($msg, 'T.R.O.N. Task Intelligence', '');
+			`, ticketList, cleanRepo)
 
 			cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", psCommand)
 
 		case "darwin":
-			msg := fmt.Sprintf("Triggered by: %s\\n\\nConnected Projects: %s\\n\\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
+			msg := fmt.Sprintf("Repo: %s\\n\\n%s\\n\\nEnter Ticket ID or New Task:", repoNameOnly, ticketList)
 			asCommand := fmt.Sprintf(`set T to text returned of (display dialog "%s" default answer "" with title "T.R.O.N. Watcher")`, msg)
 			cmd = exec.Command("osascript", "-e", asCommand)
-
-		case "linux":
-			msg := fmt.Sprintf("Triggered by: %s\n\nConnected Projects: %s\n\nWhat task/ticket are you working on? (Type IGNORE to skip)", repoNameOnly, connectedProjectsList)
-			cmd = exec.Command("zenity", "--entry", "--title=T.R.O.N. Watcher", fmt.Sprintf("--text=%s", msg))
 
 		default:
 			rawInput = "IGNORE"
@@ -302,7 +294,6 @@ func main() {
 		if cmd != nil {
 			out, err := cmd.Output()
 			if err != nil {
-				// 🛡️ DEBUG FIX: Print the actual PowerShell error to the console!
 				fmt.Printf("❌ UI Prompt crashed: %v\n", err)
 				rawInput = "IGNORE"
 			} else {
@@ -321,20 +312,9 @@ func main() {
 			return
 		}
 
-		fmt.Printf("☁️  Sending '%s' to T.R.O.N. Cloud Router to resolve ID...\n", rawInput)
-
-		cmd = exec.Command("git", "-C", repoRoot, "config", "--get", "remote.origin.url")
-		out, _ := cmd.Output()
-		repoName := "unknown/repo"
-		url := strings.TrimSpace(string(out))
-		url = strings.TrimSuffix(url, ".git")
-		parts := strings.Split(url, "/")
-		if len(parts) >= 2 {
-			repoName = parts[len(parts)-2] + "/" + parts[len(parts)-1]
-		}
-
+		// RESOLVE VIA CLOUD
+		fmt.Printf("☁️  Resolving '%s' via T.R.O.N. Cloud...\n", rawInput)
 		immutableID := getImmutableRepoID(repoRoot)
-
 		payload, _ := json.Marshal(map[string]string{
 			"taskInput": rawInput,
 			"repoName":  repoName,
@@ -346,20 +326,16 @@ func main() {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", daemonConfig.APIKey)
 
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
+		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
 
 		var finalTaskID string
-
 		if err == nil && resp.StatusCode == 200 {
 			var result map[string]string
 			json.NewDecoder(resp.Body).Decode(&result)
 			finalTaskID = result["resolvedId"]
-			fmt.Printf("✅ Cloud resolved task to ID: %s\n", finalTaskID)
+			fmt.Printf("✅ Cloud resolved to ID: %s\n", finalTaskID)
 		} else {
-			log.Printf("ERROR: Cloud sync failed. Falling back to manual formatting.")
 			finalTaskID = strings.ReplaceAll(strings.TrimSpace(rawInput), " ", "-")
 		}
 
@@ -374,15 +350,13 @@ func main() {
 		branchName := fmt.Sprintf("feature/TASK-%s", finalTaskID)
 		gitCmd := exec.Command("git", "-C", repoRoot, "checkout", "-b", branchName)
 		if err := gitCmd.Run(); err != nil {
-			gitCmd = exec.Command("git", "-C", repoRoot, "checkout", branchName)
-			_ = gitCmd.Run()
+			exec.Command("git", "-C", repoRoot, "checkout", branchName).Run()
 		}
 		fmt.Printf("🌿 Switched to %s\n", branchName)
 	}
 
 	w, err := watcher.Start(targetDir, onFileChange)
 	if err != nil {
-		// 🛡️ DEBUG FIX: Print the actual error before crashing!
 		log.Fatalf("❌ FATAL: Failed to start file watcher: %v", err)
 	}
 	defer w.Close()
