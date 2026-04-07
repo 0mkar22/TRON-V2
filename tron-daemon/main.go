@@ -76,6 +76,7 @@ func loadConfig() {
 
 // 🛡️ NEW: Fetch real-time Basecamp tickets for the specific repository
 func fetchProjectTickets(repoName string) string {
+
 	// 🛡️ FIX 1: Ensure we URL-encode the repo name (replaces / with %2F)
 	encodedRepo := strings.ReplaceAll(repoName, "/", "%2F")
 
@@ -93,7 +94,7 @@ func fetchProjectTickets(repoName string) string {
 	// 🛡️ FIX 3: Ensure the API Key header is EXACTLY what Postman used
 	req.Header.Set("x-api-key", daemonConfig.APIKey)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second} // Increased for Render Cold Starts
 	resp, err := client.Do(req)
 
 	if err != nil {
