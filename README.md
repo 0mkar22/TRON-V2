@@ -16,8 +16,8 @@ T.R.O.N. is built on a **Hub and Spoke** model to ensure centralized management 
 * **🧠 Context-Aware Local Daemon:** Automatically detects when a developer is writing code on a tracked project, intercepting file saves to prompt for task selection without interrupting the terminal.
 * **🛡️ 5-Second Git Shield:** Intelligently ignores internal Git operations (like `checkout`, `pull`, `merge`) to prevent ghost triggers and annoying pop-ups.
 * **🤖 AI-Powered Pull Request Reviews:** Listens to GitHub webhooks and uses OpenRouter AI to automatically review code diffs, translating technical changes into business value.
-* **📢 Cross-Platform Broadcasting:** Automatically sends rich embeds to Discord/Slack when PRs are opened, reviewed, or merged.
-* **🏢 Centralized `tron.yaml` Routing:** Admins can route dozens of GitHub repositories to different Basecamp boards and Discord channels from a single config file, with zero changes required by developers.
+* **📢 Cross-Platform Broadcasting:** Automatically sends rich embeds to Discord/Slack/Teams when PRs are opened, reviewed, or merged.
+* **🏢 Centralized `tron.yaml` Routing:** Admins/Project Manager can route dozens of GitHub repositories to different Basecamp boards and Discord channels from a single config file, with zero changes required by developers.
 
 ---
 
