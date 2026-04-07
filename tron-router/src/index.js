@@ -143,3 +143,11 @@ app.get('/api/project/:repo/tickets', async (req, res) => {
 app.listen(port, () => {
     console.log(`\n🌐 T.R.O.N. Cloud Router listening at http://localhost:${port}`);
 });
+
+app.listen(port, () => {
+    console.log(`\n🌐 T.R.O.N. Cloud Router listening at http://localhost:${port}`);
+});
+
+// 🛡️ THE FREE TIER HACK: Run the worker in the same process!
+console.log('🚀 Booting up the integrated Background Worker...');
+require('./worker');
