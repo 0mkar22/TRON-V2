@@ -24,12 +24,13 @@ import (
 )
 
 var (
-	activeTasks   = make(map[string]string)
-	isPrompting   = make(map[string]bool)
-	ignoredRepos  = make(map[string]int64)
-	lastWrite     = make(map[string]time.Time)
-	lastEventTime = make(map[string]time.Time)
-	sessionMutex  sync.Mutex
+	activeTasks      = make(map[string]string)
+	isPrompting      = make(map[string]bool)
+	ignoredRepos     = make(map[string]int64)
+	lastWrite        = make(map[string]time.Time)
+	lastEventTime    = make(map[string]time.Time)
+	lastGitOperation = make(map[string]time.Time) // 🛡️ NEW: Tracks internal Git operations
+	sessionMutex     sync.Mutex
 
 	// 🛡️ NEW: Ticket storage for the active repo
 	activeTicketList string
@@ -214,6 +215,22 @@ func main() {
 		}
 
 		sessionMutex.Lock()
+		// 🛡️ THE GHOST TRIGGER FIX (Part 1): If Git modifies a .git file, record the exact time.
+		if strings.Contains(fileName, ".git") {
+			lastGitOperation[repoRoot] = time.Now()
+			sessionMutex.Unlock()
+			return
+		}
+
+		// 🛡️ THE GHOST TRIGGER FIX (Part 2): The 5-Second Shield
+		// If a Git command (like checkout/pull) ran in the last 5 seconds,
+		// assume this file change is from Git, NOT a human typing. Ignore it!
+		if time.Since(lastGitOperation[repoRoot]) < 5*time.Second {
+			sessionMutex.Unlock()
+			return
+		}
+
+		// Standard event debounce
 		if time.Since(lastEventTime[repoRoot]) < 3*time.Second {
 			sessionMutex.Unlock()
 			return
@@ -251,24 +268,17 @@ func main() {
 			githook.ClearTaskState(repoRoot)
 		}
 
-		// 3. 🛡️ NEW: Ignore Git's internal file changes.
-		// When you run `git checkout main`, Git modifies hundreds of files in the .git folder.
-		// We ignore those so the pop-up doesn't interrupt your terminal commands.
-		if strings.Contains(fileName, ".git") {
-			sessionMutex.Unlock()
-			return
-		}
-
-		// 4. Check the Snooze Button
+		// 3. Check the Snooze Button
 		if snoozeTime, exists := ignoredRepos[repoRoot]; exists {
-			if time.Now().Unix()-snoozeTime < 3600 {
+			// Changed from 3600 (1 hour) to 120 (2 minutes)
+			if time.Now().Unix()-snoozeTime < 120 {
 				sessionMutex.Unlock()
 				return
 			}
 			delete(ignoredRepos, repoRoot)
 		}
 
-		// 5. Ensure we only show one pop-up at a time
+		// 4. Ensure we only show one pop-up at a time
 		if isPrompting[repoRoot] {
 			sessionMutex.Unlock()
 			return
