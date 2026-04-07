@@ -5,12 +5,12 @@ services:
   - type: web
     name: tron-api
     env: node
+    rootDir: tron-router # 🛡️ THE MONOREPO FIX
     buildCommand: npm install
     startCommand: node src/index.js
     envVars:
       - key: NODE_ENV
         value: production
-      # Render dynamically injects the Redis URL here
       - key: REDIS_URL
         fromService:
           type: redis
@@ -21,8 +21,9 @@ services:
   - type: worker
     name: tron-worker
     env: node
+    rootDir: tron-router # 🛡️ THE MONOREPO FIX
     buildCommand: npm install
-    startCommand: node src/worker.js # Ensure this points to your worker file
+    startCommand: node src/worker.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -35,5 +36,5 @@ services:
   # 3. THE REDIS QUEUE
   - type: redis
     name: tron-redis
-    ipAllowList: [] # Allows internal Render network connections
-    plan: free # You can upgrade this later if the team scales up
+    ipAllowList: [] 
+    plan: free
