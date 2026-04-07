@@ -1,0 +1,39 @@
+version: "1"
+
+services:
+  # 1. THE CLOUD ROUTER (Web API)
+  - type: web
+    name: tron-api
+    env: node
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render dynamically injects the Redis URL here
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: tron-redis
+          property: connectionString
+
+  # 2. THE BACKGROUND WORKER
+  - type: worker
+    name: tron-worker
+    env: node
+    buildCommand: npm install
+    startCommand: node src/worker.js # Ensure this points to your worker file
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: tron-redis
+          property: connectionString
+
+  # 3. THE REDIS QUEUE
+  - type: redis
+    name: tron-redis
+    ipAllowList: [] # Allows internal Render network connections
+    plan: free # You can upgrade this later if the team scales up
