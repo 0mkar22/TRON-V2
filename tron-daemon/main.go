@@ -227,6 +227,7 @@ func main() {
 		currentBranch := getCurrentBranch(repoRoot)
 		sessionMutex.Lock()
 
+		// 1. Are we on a task branch? (Business as usual)
 		if strings.HasPrefix(currentBranch, "feature/TASK-") {
 			taskID := strings.TrimPrefix(currentBranch, "feature/TASK-")
 			activeTasks[repoRoot] = taskID
@@ -241,6 +242,23 @@ func main() {
 			return
 		}
 
+		// 2. 🧹 NEW: We are NOT on a task branch!
+		// If memory still thinks we are, we just checked out 'main'. Clear it!
+		if activeTasks[repoRoot] != "" {
+			fmt.Println("🧹 Switched off task branch. Clearing T.R.O.N. memory.")
+			delete(activeTasks, repoRoot)
+			githook.ClearTaskState(repoRoot)
+		}
+
+		// 3. 🛡️ NEW: Ignore Git's internal file changes.
+		// When you run `git checkout main`, Git modifies hundreds of files in the .git folder.
+		// We ignore those so the pop-up doesn't interrupt your terminal commands.
+		if strings.Contains(fileName, ".git") {
+			sessionMutex.Unlock()
+			return
+		}
+
+		// 4. Check the Snooze Button
 		if snoozeTime, exists := ignoredRepos[repoRoot]; exists {
 			if time.Now().Unix()-snoozeTime < 3600 {
 				sessionMutex.Unlock()
@@ -249,7 +267,8 @@ func main() {
 			delete(ignoredRepos, repoRoot)
 		}
 
-		if activeTasks[repoRoot] != "" || isPrompting[repoRoot] {
+		// 5. Ensure we only show one pop-up at a time
+		if isPrompting[repoRoot] {
 			sessionMutex.Unlock()
 			return
 		}
