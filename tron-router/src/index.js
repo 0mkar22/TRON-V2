@@ -112,17 +112,22 @@ app.get('/api/projects', (req, res) => {
 // ==========================================
 // 🔍 NEW: FETCH TICKETS FOR GO DAEMON
 // ==========================================
-// 🛡️ Handles both URL-encoded (%2F) and standard slashes from the Go Daemon
 app.get(['/api/project/:owner/:repo/tickets', '/api/project/:encodedRepo/tickets'], async (req, res) => {
-    // Reconstruct the repo name (e.g., "0mkar22/git-playground")
     const repo = req.params.encodedRepo 
         ? decodeURIComponent(req.params.encodedRepo) 
         : `${req.params.owner}/${req.params.repo}`;
 
     console.log(`\n📡 [API] Fetching tickets requested for repo: "${repo}"`);
 
-    // Find the repo in tron.yaml
-    const config = global.routingConfig.projects.find(p => p.repo === repo);
+    // 🛡️ THE FIX: Load the config directly so it never crashes on 'undefined'
+    const tronConfig = loadConfig();
+    
+    if (!tronConfig || !tronConfig.projects) {
+        console.error("❌ [API] tron.yaml is missing or malformed!");
+        return res.status(500).json({ error: "Server configuration missing." });
+    }
+
+    const config = tronConfig.projects.find(p => p.repo === repo);
     
     if (!config) {
         console.warn(`⚠️ [API] Repo "${repo}" not found in tron.yaml!`);
@@ -130,10 +135,7 @@ app.get(['/api/project/:owner/:repo/tickets', '/api/project/:encodedRepo/tickets
     }
 
     try {
-        // Fetch tickets from the Orchestrator
         const tasks = await PMOrchestrator.getTickets(config.pm_tool);
-        
-        // 🛡️ IMPORTANT: Wrap the array in a "tickets" object so the Go Daemon can parse it!
         res.json({ tickets: tasks }); 
         console.log(`✅ [API] Sent ${tasks.length} tickets to the Daemon.`);
     } catch (error) {
