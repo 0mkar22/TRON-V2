@@ -29,10 +29,10 @@ var (
 	ignoredRepos     = make(map[string]int64)
 	lastWrite        = make(map[string]time.Time)
 	lastEventTime    = make(map[string]time.Time)
-	lastGitOperation = make(map[string]time.Time) // 🛡️ NEW: Tracks internal Git operations
+	lastGitOperation = make(map[string]time.Time) // Tracks internal Git operations
 	sessionMutex     sync.Mutex
 
-	// 🛡️ NEW: Ticket storage for the active repo
+	// Ticket storage for the active repo
 	activeTicketList string
 
 	daemonConfig Config
@@ -75,13 +75,11 @@ func loadConfig() {
 	}
 }
 
-// 🛡️ NEW: Fetch real-time Basecamp tickets for the specific repository
+// Fetch real-time PM tickets for the specific repository
 func fetchProjectTickets(repoName string) string {
 
-	// 🛡️ FIX 1: Ensure we URL-encode the repo name (replaces / with %2F)
 	encodedRepo := strings.ReplaceAll(repoName, "/", "%2F")
 
-	// 🛡️ FIX 2: Construct the exact URL that worked in Postman
 	baseURL := strings.TrimSuffix(daemonConfig.CloudURL, "/")
 	endpoint := fmt.Sprintf("%s/api/project/%s/tickets", baseURL, encodedRepo)
 
@@ -92,10 +90,9 @@ func fetchProjectTickets(repoName string) string {
 		return "⚠️  Internal Daemon Error"
 	}
 
-	// 🛡️ FIX 3: Ensure the API Key header is EXACTLY what Postman used
 	req.Header.Set("x-api-key", daemonConfig.APIKey)
 
-	client := &http.Client{Timeout: 60 * time.Second} // Increased for Render Cold Starts
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 
 	if err != nil {
@@ -104,7 +101,6 @@ func fetchProjectTickets(repoName string) string {
 	}
 	defer resp.Body.Close()
 
-	// 🛡️ FIX 4: Handle Unauthorized or Not Found errors specifically
 	if resp.StatusCode == 401 {
 		return "⚠️  Invalid API Key (Unauthorized)"
 	}
@@ -121,13 +117,12 @@ func fetchProjectTickets(repoName string) string {
 	}
 
 	if len(result.Tickets) == 0 {
-		return "No active tickets found in To-Do column."
+		return "No active tickets found."
 	}
 
 	var builder strings.Builder
-	builder.WriteString("--- ACTIVE BASECAMP TICKETS ---\n")
+	builder.WriteString("--- ACTIVE TICKETS ---\n")
 	for i, t := range result.Tickets {
-		// Use a single \n here
 		builder.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, t.ID, t.Title))
 	}
 	builder.WriteString("------------------------------------------\n")
@@ -215,22 +210,17 @@ func main() {
 		}
 
 		sessionMutex.Lock()
-		// 🛡️ THE GHOST TRIGGER FIX (Part 1): If Git modifies a .git file, record the exact time.
 		if strings.Contains(fileName, ".git") {
 			lastGitOperation[repoRoot] = time.Now()
 			sessionMutex.Unlock()
 			return
 		}
 
-		// 🛡️ THE GHOST TRIGGER FIX (Part 2): The 5-Second Shield
-		// If a Git command (like checkout/pull) ran in the last 5 seconds,
-		// assume this file change is from Git, NOT a human typing. Ignore it!
 		if time.Since(lastGitOperation[repoRoot]) < 5*time.Second {
 			sessionMutex.Unlock()
 			return
 		}
 
-		// Standard event debounce
 		if time.Since(lastEventTime[repoRoot]) < 3*time.Second {
 			sessionMutex.Unlock()
 			return
@@ -245,32 +235,31 @@ func main() {
 		currentBranch := getCurrentBranch(repoRoot)
 		sessionMutex.Lock()
 
-		// 1. Are we on a task branch? (Business as usual)
-		if strings.HasPrefix(currentBranch, "feature/TASK-") {
-			taskID := strings.TrimPrefix(currentBranch, "feature/TASK-")
-			activeTasks[repoRoot] = taskID
-			if time.Since(lastWrite[repoRoot]) > 2*time.Second {
-				lastWrite[repoRoot] = time.Now()
-				go func() {
-					githook.InstallHook(repoRoot)
-					githook.WriteTaskState(repoRoot, taskID)
-				}()
+		if strings.HasPrefix(currentBranch, "feature/TASK-") || strings.HasPrefix(currentBranch, "feature/") {
+			// Extracting task ID more broadly to catch Basecamp and Jira
+			parts := strings.SplitN(currentBranch, "/", 2)
+			if len(parts) > 1 {
+				taskID := strings.TrimPrefix(parts[1], "TASK-")
+				activeTasks[repoRoot] = taskID
+				if time.Since(lastWrite[repoRoot]) > 2*time.Second {
+					lastWrite[repoRoot] = time.Now()
+					go func() {
+						githook.InstallHook(repoRoot)
+						githook.WriteTaskState(repoRoot, taskID)
+					}()
+				}
 			}
 			sessionMutex.Unlock()
 			return
 		}
 
-		// 2. 🧹 NEW: We are NOT on a task branch!
-		// If memory still thinks we are, we just checked out 'main'. Clear it!
 		if activeTasks[repoRoot] != "" {
 			fmt.Println("🧹 Switched off task branch. Clearing T.R.O.N. memory.")
 			delete(activeTasks, repoRoot)
 			githook.ClearTaskState(repoRoot)
 		}
 
-		// 3. Check the Snooze Button
 		if snoozeTime, exists := ignoredRepos[repoRoot]; exists {
-			// Changed from 3600 (1 hour) to 120 (2 minutes)
 			if time.Now().Unix()-snoozeTime < 120 {
 				sessionMutex.Unlock()
 				return
@@ -278,7 +267,6 @@ func main() {
 			delete(ignoredRepos, repoRoot)
 		}
 
-		// 4. Ensure we only show one pop-up at a time
 		if isPrompting[repoRoot] {
 			sessionMutex.Unlock()
 			return
@@ -287,44 +275,61 @@ func main() {
 		isPrompting[repoRoot] = true
 		sessionMutex.Unlock()
 
-		_ = beeep.Notify("T.R.O.N. Intent Detected", "Syncing tickets with Basecamp...", "")
+		_ = beeep.Notify("T.R.O.N. Intent Detected", "Syncing tickets with Project Manager...", "")
 
-		// 🚀 FETCH TICKETS LIVE
 		repoName := getRepoNameFromGit(repoRoot)
 		ticketList := fetchProjectTickets(repoName)
-
 		repoNameOnly := filepath.Base(repoRoot)
+
 		var cmd *exec.Cmd
 		var rawInput string
 
+		// 🛡️ CROSS-PLATFORM UI PROMPT
 		switch runtime.GOOS {
 		case "windows":
 			cleanRepo := strings.ReplaceAll(repoNameOnly, "'", "")
-			// We use @' '@ (Here-String) to preserve the structure of the ticketList
 			psCommand := fmt.Sprintf(`
 				[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null;
 				$menu = @'
 %s
 '@;
 				$msg = "Repo: %s" + [Environment]::NewLine + [Environment]::NewLine + $menu + [Environment]::NewLine + "Enter Ticket ID or New Task Name:";
-				[Microsoft.VisualBasic.Interaction]::InputBox($msg, 'T.R.O.N. Task Intelligence', '');
+				$result = [Microsoft.VisualBasic.Interaction]::InputBox($msg, 'T.R.O.N. Task Intelligence', '');
+				if ([string]::IsNullOrWhiteSpace($result)) { Write-Output "IGNORE" } else { Write-Output $result }
 			`, ticketList, cleanRepo)
 
 			cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", psCommand)
 
 		case "darwin":
-			msg := fmt.Sprintf("Repo: %s\\n\\n%s\\n\\nEnter Ticket ID or New Task:", repoNameOnly, ticketList)
-			asCommand := fmt.Sprintf(`set T to text returned of (display dialog "%s" default answer "" with title "T.R.O.N. Watcher")`, msg)
-			cmd = exec.Command("osascript", "-e", asCommand)
+			// Safely escape strings to prevent AppleScript from breaking on quotes
+			safeRepo := strings.ReplaceAll(repoNameOnly, `"`, `\"`)
+			safeTickets := strings.ReplaceAll(ticketList, `"`, `\"`)
+
+			// We pass the script via stdin to avoid command line argument limits and escaping bugs
+			appleScript := fmt.Sprintf(`
+				set repoName to "%s"
+				set ticketList to "%s"
+				set dialogMsg to "Repo: " & repoName & return & return & ticketList & return & return & "Enter Ticket ID or New Task:"
+				try
+					set dialogResult to display dialog dialogMsg default answer "" with title "T.R.O.N. Watcher"
+					return text returned of dialogResult
+				on error number -128
+					return "IGNORE"
+				end try
+			`, safeRepo, safeTickets)
+
+			cmd = exec.Command("osascript", "-")
+			cmd.Stdin = strings.NewReader(appleScript)
 
 		default:
+			// Fallback for Linux (could implement Zenity here if needed later)
 			rawInput = "IGNORE"
 		}
 
 		if cmd != nil {
 			out, err := cmd.Output()
 			if err != nil {
-				fmt.Printf("❌ UI Prompt crashed: %v\n", err)
+				fmt.Printf("❌ UI Prompt failed/canceled: %v\n", err)
 				rawInput = "IGNORE"
 			} else {
 				rawInput = strings.TrimSpace(string(out))
