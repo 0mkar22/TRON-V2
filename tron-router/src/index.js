@@ -24,34 +24,36 @@ app.use(express.json({
 // DAEMON API: START TASK
 // ==========================================
 app.post('/api/start-task', async (req, res) => {
+    // 🛡️ 1. Security & Payload Validation
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== process.env.DAEMON_API_KEY) {
         return res.status(401).send({ error: 'Unauthorized' });
     }
 
-    const { taskInput, repoName } = req.body;
+    const { taskInput, repoName, repoId } = req.body;
     if (!taskInput || !repoName) {
         return res.status(400).send({ error: 'Missing payload data' });
     }
 
     console.log(`\n🔥 Local Daemon requested task resolution for: [${taskInput}] in [${repoName}]`);
 
-    const projectConfig = globalConfig.projects.find(p => p.repo === repoName);
+    // 🧠 2. Dynamic Config Loading
+    const tronConfig = loadConfig();
+    const projectConfig = tronConfig?.projects?.find(p => p.repo === repoName);
+
     if (!projectConfig) {
         return res.status(404).send({ error: 'Repository not configured in tron.yaml' });
     }
 
     try {
-        let resolvedTaskID = `fallback-task-${Date.now()}`; 
+        let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Fallback sanitized string
 
-        if (projectConfig.pm_tool && projectConfig.pm_tool !== "none") {
-            const pmAdapter = require(`./adapters/${projectConfig.pm_tool}`);
-            const boardID = projectConfig.board_id;
-            const todoColumnID = projectConfig.mapping.todo_column;
-
-            resolvedTaskID = await pmAdapter.resolveTask(taskInput, boardID, todoColumnID);
+        // 🔀 3. Route task creation through the Orchestrator
+        if (projectConfig.pm_tool && projectConfig.pm_tool.provider !== "none") {
+            resolvedTaskID = await PMOrchestrator.createTicket(projectConfig.pm_tool, taskInput);
         }
 
+        // 📦 4. Send Job to the Worker Queue
         const queueJob = {
             deliveryId: `local-${Date.now()}`,
             eventType: 'local_start',
@@ -62,11 +64,15 @@ app.post('/api/start-task', async (req, res) => {
         };
         await redis.lpush('tron:webhook_queue', JSON.stringify(queueJob));
 
+        // 📤 5. Respond back to the Go Daemon
         res.status(200).send({ resolvedId: resolvedTaskID });
 
     } catch (error) {
-        console.error('❌ Failed to resolve task:', error);
-        res.status(500).send({ error: 'Failed to resolve task' });
+        console.error('❌ Failed to resolve task via Orchestrator:', error.message);
+        
+        // Graceful fallback so the Go Daemon can still create a branch
+        const fallbackId = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        res.status(500).send({ resolvedId: fallbackId });
     }
 });
 
