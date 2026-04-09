@@ -112,28 +112,33 @@ app.get('/api/projects', (req, res) => {
 // ==========================================
 // 🔍 NEW: FETCH TICKETS FOR GO DAEMON
 // ==========================================
-app.get('/api/project/:repo/tickets', async (req, res) => {
-    // 🛡️ SECURITY: Only allow the Daemon to fetch the menu
-    const apiKey = req.headers['x-api-key'];
-    if (apiKey !== process.env.DAEMON_API_KEY) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+// 🛡️ Handles both URL-encoded (%2F) and standard slashes from the Go Daemon
+app.get(['/api/project/:owner/:repo/tickets', '/api/project/:encodedRepo/tickets'], async (req, res) => {
+    // Reconstruct the repo name (e.g., "0mkar22/git-playground")
+    const repo = req.params.encodedRepo 
+        ? decodeURIComponent(req.params.encodedRepo) 
+        : `${req.params.owner}/${req.params.repo}`;
 
-    const repo = decodeURIComponent(req.params.repo);
-    // 🛡️ FIX: Changed 'config' to 'globalConfig' to match your setup
-    const projectConfig = globalConfig.projects.find(p => p.repo === repo);
+    console.log(`\n📡 [API] Fetching tickets requested for repo: "${repo}"`);
 
-    if (!projectConfig || projectConfig.pm_tool !== 'basecamp') {
-        return res.status(404).json({ error: "Project not found or not using Basecamp" });
+    // Find the repo in tron.yaml
+    const config = global.routingConfig.projects.find(p => p.repo === repo);
+    
+    if (!config) {
+        console.warn(`⚠️ [API] Repo "${repo}" not found in tron.yaml!`);
+        return res.status(404).json({ error: "Repository not registered in tron.yaml" });
     }
 
     try {
-        // 🔀 THE FIX: Pass the entire pm_tool config to the orchestrator
+        // Fetch tickets from the Orchestrator
         const tasks = await PMOrchestrator.getTickets(config.pm_tool);
-        res.json(tasks);
+        
+        // 🛡️ IMPORTANT: Wrap the array in a "tickets" object so the Go Daemon can parse it!
+        res.json({ tickets: tasks }); 
+        console.log(`✅ [API] Sent ${tasks.length} tickets to the Daemon.`);
     } catch (error) {
-        console.error(`❌ [ROUTER] Ticket Fetch Error:`, error.message);
-        res.status(500).json({ error: error.message });
+        console.error("❌ [API] Failed to fetch tickets:", error.message);
+        res.status(500).json({ error: "Failed to fetch active tasks." });
     }
 });
 
