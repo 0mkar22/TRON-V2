@@ -1,98 +1,184 @@
-const fs = require('fs');
-const yaml = require('js-yaml');
+// tron-router/scripts/enterprise-sync.js
 require('dotenv').config();
+const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
+const yaml = require('js-yaml');
 
-// 🛡️ IMPORT ONLY WHAT WE ARE USING
+// Import all Adapters
 const GithubAdapter = require('./adapters/sync/github');
 const BasecampAdapter = require('./adapters/sync/basecamp');
+// Note: We are using the main adapter folder for Jira/Monday since they don't have separate sync scripts yet
+const JiraAdapter = require('../src/adapters/jira'); 
+const MondayAdapter = require('../src/adapters/monday'); 
+
 const DiscordAdapter = require('./adapters/sync/discord');
+const SlackAdapter = require('./adapters/sync/slack');
+// const TeamsAdapter = require('./adapters/sync/teams'); // Teams usually requires manual webhook URLs
 
-// ==========================================
-// THE VENDOR-AGNOSTIC ORCHESTRATOR
-// ==========================================
-async function runGlobalSync() {
-    console.log("🌐 Booting T.R.O.N. Universal Sync Engine...");
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
 
-    try {
-        // 1. Fetch all Repositories
-        console.log("📥 Fetching GitHub Repositories...");
-        const repos = await GithubAdapter.fetchRepos(
-            process.env.GITHUB_ORG_NAME, 
-            process.env.GITHUB_TOKEN
-        );
+const askQuestion = (query) => new Promise(resolve => rl.question(query, resolve));
 
-        // 2. Fetch all PM Boards
-        console.log("📥 Fetching Boards from Basecamp...");
-        const allBoards = await BasecampAdapter.fetchBoards(
-            "6169369",
-            "BAhbB0kiAbB7ImNsaWVudF9pZCI6ImUxYzJiNjFkMzFmMThlMzAwZjAyNzk5MTFiNmJhZjk5YjlmODUyMTAiLCJleHBpcmVzX2F0IjoiMjAyNi0wNC0yMFQwNTo1Nzo0N1oiLCJ1c2VyX2lkcyI6WzUzMTc0Mjk5XSwidmVyc2lvbiI6MSwiYXBpX2RlYWRib2x0IjoiNWU2MWUyNGY1OGJlOTQ1MTMwMjQzODZjMTE4MTc4MTAifQY6BkVUSXU6CVRpbWUNhY4fwLmR/eYJOg1uYW5vX251bWkCzAI6DW5hbm9fZGVuaQY6DXN1Ym1pY3JvIgdxYDoJem9uZUkiCFVUQwY7AEY=--d24d99f407803d906b9d3cce8508199080234b4d",
-            "obhogate48@gmail.com"
-        );
+async function runSync() {
+    console.log("🚀 Welcome to the T.R.O.N. Enterprise Configurator\n");
+
+    // ==========================================
+    // 1. FETCH GITHUB REPOS
+    // ==========================================
+    if (!process.env.GITHUB_TOKEN) {
+        console.error("❌ GITHUB_TOKEN is missing from .env");
+        process.exit(1);
+    }
+    const repos = await GithubAdapter.fetchRepos(process.env.GITHUB_TOKEN);
+    if (repos.length === 0) {
+        console.error("❌ No GitHub repositories found or token invalid.");
+        process.exit(1);
+    }
+
+    // ==========================================
+    // 2. FETCH PROJECT MANAGEMENT BOARDS (Multi-Provider)
+    // ==========================================
+    console.log("\n📡 Scanning for Project Management Integrations...");
+    const availablePmBoards = [];
+
+    if (process.env.BASECAMP_ACCESS_TOKEN && process.env.BASECAMP_ACCOUNT_ID) {
+        console.log("  ✅ Basecamp detected. Fetching projects...");
+        // ❌ OLD LINE:
+        // const bcProjects = await BasecampAdapter.fetchProjects(process.env.BASECAMP_ACCESS_TOKEN, process.env.BASECAMP_ACCOUNT_ID);
         
-        // 3. Fetch all Comm Channels
-        console.log("📥 Fetching Channels from Discord...");
-        const allChannels = await DiscordAdapter.fetchChannels(
-            process.env.DISCORD_BOT_TOKEN
+        // ✅ NEW LINE:
+        const bcProjects = await BasecampAdapter.fetchBoards(
+            process.env.BASECAMP_ACCOUNT_ID, 
+            process.env.BASECAMP_ACCESS_TOKEN, 
+            "admin@tron.local" // Basecamp requires a User-Agent email
         );
 
-        // Safety check in case APIs returned undefined
-        const repoCount = repos ? repos.length : 0;
-        const boardCount = allBoards ? allBoards.length : 0;
-        const channelCount = allChannels ? allChannels.length : 0;
+        // Map to a standard format for the menu
+        availablePmBoards.push(...bcProjects.map(p => ({ provider: 'basecamp', id: p.id, name: `[Basecamp] ${p.name}` })));
+    }
 
-        console.log(`🧠 Running Matchmaker on ${repoCount} Repos, ${boardCount} Boards, and ${channelCount} Channels...`);
+    if (process.env.JIRA_API_TOKEN && process.env.JIRA_DOMAIN && process.env.JIRA_EMAIL) {
+        console.log("  ✅ Jira detected. Fetching projects...");
+        // Note: You might need to add a specific `fetchProjects()` method to JiraAdapter if it doesn't exist, 
+        // or just ask the user to type the Jira Key manually later. For now, let's assume you have a way to list them,
+        // or we can just offer "Jira" as a manual text-entry option below.
+        console.log("  ⚠️ Jira Projects currently require manual Project Key entry during mapping.");
+    }
+
+    if (process.env.MONDAY_API_TOKEN) {
+         console.log("  ✅ Monday.com detected.");
+         console.log("  ⚠️ Monday Boards currently require manual Board ID entry during mapping.");
+    }
+
+    // ==========================================
+    // 3. FETCH COMMUNICATION CHANNELS (Multi-Provider)
+    // ==========================================
+    console.log("\n📡 Scanning for Communication Integrations...");
+    const availableChannels = [];
+
+    if (process.env.DISCORD_BOT_TOKEN) {
+        console.log("  ✅ Discord detected. Fetching channels...");
+        const dChannels = await DiscordAdapter.fetchChannels(process.env.DISCORD_BOT_TOKEN);
+        availableChannels.push(...dChannels.map(c => ({ provider: 'discord', id: c.id, name: `[Discord] ${c.name}` })));
+    }
+
+    if (process.env.SLACK_BOT_TOKEN) {
+        console.log("  ✅ Slack detected. Fetching channels...");
+        const sChannels = await SlackAdapter.fetchChannels(process.env.SLACK_BOT_TOKEN);
+        availableChannels.push(...sChannels.map(c => ({ provider: 'slack', id: c.id, name: `[Slack] ${c.name}` })));
+    }
+
+    // ==========================================
+    // 4. INTERACTIVE MAPPING LOOP
+    // ==========================================
+    const finalConfig = { projects: [] };
+
+    for (const repo of repos) {
+        console.log(`\n------------------------------------------------`);
+        const mapIt = await askQuestion(`Configure routing for repository: ${repo.full_name}? (y/n): `);
         
-        const finalYamlData = {
-            _comment: "🤖 Auto-generated by T.R.O.N. Universal Sync Engine",
-            projects: []
+        if (mapIt.toLowerCase() !== 'y') continue;
+
+        const projectBlock = {
+            repo: repo.full_name,
+            pm_tool: { provider: 'none' },
+            mapping: {
+                todo_column: 'To Do',
+                branch_created: 'In Progress',
+                pull_request_opened: 'Under Review',
+                pull_request_closed: 'Done'
+            },
+            communication: { provider: 'none' }
         };
 
-        // 4. The Universal Flexible Matchmaker
-        for (const repo of repos || []) {
-            const cleanRepoName = repo.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        // --- Select PM Tool ---
+        console.log(`\nSelect a PM Tool for ${repo.full_name}:`);
+        console.log(`0. None (Skip PM tracking)`);
+        availablePmBoards.forEach((board, index) => {
+            console.log(`${index + 1}. ${board.name}`);
+        });
+        console.log(`X. Enter Jira Project Key manually`);
+        console.log(`Y. Enter Monday Board ID manually`);
 
-            const matchedBoard = (allBoards || []).find(b => 
-                b.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRepoName
-            );
-
-            const matchedChannel = (allChannels || []).find(c => 
-                c.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRepoName
-            );
-
-            if (matchedBoard || matchedChannel) {
-                // 🛡️ THE FIX: Default to basecamp/discord if the adapter forgot to name the tool
-                const pmTool = matchedBoard ? (matchedBoard.tool) : "none";
-                const commTool = matchedChannel ? (matchedChannel.tool) : "none";
-                
-                const boardName = matchedBoard ? `[${pmTool}] ${matchedBoard.name}` : "[No PM Tool]";
-                const channelName = matchedChannel ? `[${commTool}] #${matchedChannel.name}` : "[No Comm Tool]";
-                
-                console.log(`✅ MATCH: ${repo.fullName} -> ${boardName} -> ${channelName}`);
-                
-                finalYamlData.projects.push({
-                    repo: repo.fullName,
-                    pm_tool: pmTool,
-                    board_id: matchedBoard ? matchedBoard.id : null,
-                    notification_webhook: matchedChannel ? matchedChannel.webhook : null,
-                    // 🛡️ THE FIX: Safely fallback to strings so it never crashes!
-                    mapping: matchedBoard ? {
-                        todo_column: matchedBoard?.mapping?.todo || "not found_todo_column_id",
-                        branch_created: matchedBoard?.mapping?.in_progress || "REPLACE_WITH_IN_PROGRESS_COLUMN_ID",
-                        pull_request_opened: matchedBoard?.mapping?.in_review || "REPLACE_WITH_REVIEW_COLUMN_ID",
-                        pull_request_closed: matchedBoard?.mapping?.done || "REPLACE_WITH_DONE_COLUMN_ID"
-                    } : {}
-                });
+        const pmChoice = await askQuestion(`Choose PM option (0-${availablePmBoards.length}, X, Y): `);
+        
+        if (pmChoice.toUpperCase() === 'X') {
+            const jKey = await askQuestion("Enter Jira Project Key (e.g., ENG): ");
+            projectBlock.pm_tool = { provider: 'jira', project_key: jKey };
+        } else if (pmChoice.toUpperCase() === 'Y') {
+            const mId = await askQuestion("Enter Monday Board ID (e.g., 12345678): ");
+            projectBlock.pm_tool = { provider: 'monday', board_id: mId };
+        } else {
+            const pmIndex = parseInt(pmChoice) - 1;
+            if (pmIndex >= 0 && pmIndex < availablePmBoards.length) {
+                const selectedBoard = availablePmBoards[pmIndex];
+                projectBlock.pm_tool = { provider: selectedBoard.provider, board_id: selectedBoard.id.toString() };
             }
         }
 
-        // 5. Generate the Master YAML
-        console.log(`\n💾 Generating master tron.yaml...`);
-        fs.writeFileSync('./tron.yaml', yaml.dump(finalYamlData, { lineWidth: -1 }), 'utf8');
-        console.log("🚀 UNIVERSAL SYNC COMPLETE.");
+        // --- Select Communication Channel ---
+        console.log(`\nSelect a Notification Channel for ${repo.full_name}:`);
+        console.log(`0. None (Skip notifications)`);
+        availableChannels.forEach((channel, index) => {
+            console.log(`${index + 1}. ${channel.name}`);
+        });
+        console.log(`Z. Enter a manual Webhook URL (e.g., MS Teams or custom Slack webhook)`);
 
-    } catch (error) {
-        console.error("❌ Sync Failed:", error);
+        const commChoice = await askQuestion(`Choose Communication option (0-${availableChannels.length}, Z): `);
+
+        if (commChoice.toUpperCase() === 'Z') {
+            const wUrl = await askQuestion("Enter Full Webhook URL: ");
+            // We assume 'teams' here as a placeholder, but the Orchestrator handles raw URLs well
+            projectBlock.communication = { provider: 'teams', webhook_url: wUrl };
+        } else {
+            const commIndex = parseInt(commChoice) - 1;
+            if (commIndex >= 0 && commIndex < availableChannels.length) {
+                const selectedChannel = availableChannels[commIndex];
+                projectBlock.communication = { provider: selectedChannel.provider, webhook_url: selectedChannel.id.toString() };
+            }
+        }
+
+        finalConfig.projects.push(projectBlock);
+        console.log(`✅ Configured ${repo.full_name}!`);
     }
+
+    // ==========================================
+    // 5. SAVE YAML
+    // ==========================================
+    if (finalConfig.projects.length > 0) {
+        const yamlStr = yaml.dump(finalConfig, { noRefs: true });
+        const outputPath = path.join(__dirname, '..', 'tron.yaml');
+        fs.writeFileSync(outputPath, yamlStr, 'utf8');
+        console.log(`\n🎉 Success! Wrote configuration for ${finalConfig.projects.length} projects to ${outputPath}`);
+    } else {
+        console.log(`\n⚠️ No projects configured. Exiting.`);
+    }
+
+    rl.close();
 }
 
-runGlobalSync();
+runSync();

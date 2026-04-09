@@ -3,6 +3,7 @@ const express = require('express');
 const Redis = require('ioredis');
 const verifyGitHub = require('./middleware/verifyGitHub'); 
 const loadConfig = require('./config/yamlLoader');
+const PMOrchestrator = require('./adapters/pm-orchestrator');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -127,13 +128,9 @@ app.get('/api/project/:repo/tickets', async (req, res) => {
     }
 
     try {
-        const basecamp = require('./adapters/basecamp');
-        const todoColumnId = projectConfig.mapping.todo_column;
-        
-        // Fetch tickets via our updated Basecamp adapter
-        const tickets = await basecamp.getTicketsInColumn(projectConfig.board_id, todoColumnId);
-        
-        res.json({ tickets }); 
+        // 🔀 THE FIX: Pass the entire pm_tool config to the orchestrator
+        const tasks = await PMOrchestrator.getTickets(config.pm_tool);
+        res.json(tasks);
     } catch (error) {
         console.error(`❌ [ROUTER] Ticket Fetch Error:`, error.message);
         res.status(500).json({ error: error.message });

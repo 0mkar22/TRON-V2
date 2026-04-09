@@ -1,60 +1,48 @@
-const axios = require('axios');
+// tron-router/src/adapters/messenger.js
+const DiscordAdapter = require('../../scripts/adapters/sync/discord');
+const SlackAdapter = require('../../scripts/adapters/sync/slack');
+const TeamsAdapter = require('../../scripts/adapters/sync/teams');
 
 /**
- * 📢 T.R.O.N. Messenger Adapter
- * Updated to handle the full PR context and AI report.
+ * 📢 T.R.O.N. Messenger Orchestrator
+ * Routes the AI report to the correct communication platform based on tron.yaml.
  */
-async function broadcastSummary(webhookUrl, prTitle, prUrl, aiResult) {
-    console.log(`\n📢 [MESSENGER ADAPTER] Formatting and broadcasting to team channel...`);
+async function broadcastSummary(communicationConfig, prTitle, prUrl, aiResult) {
+    console.log(`\n📢 [MESSENGER ORCHESTRATOR] Routing broadcast to team channel...`);
 
     // 🛡️ DATA INTEGRITY CHECK
-    // If aiResult is missing, we provide fallbacks so the message doesn't break.
     const intent = aiResult?.intent || "General Update";
     const impact = aiResult?.business_impact || "Manual review required.";
     const summary = aiResult?.executive_summary || "No automated summary available.";
     const confidence = aiResult?.confidence_score || 0;
 
-    // 🎨 DISCORD EMBED CONSTRUCTION
-    // Using embeds makes the message look like a professional enterprise notification.
-    const discordPayload = {
-        embeds: [{
-            title: `🚀 T.R.O.N. Intel: ${prTitle}`,
-            url: prUrl,
-            color: 3447003, // A nice "Enterprise Blue"
-            fields: [
-                { name: "🎯 Intent", value: intent, inline: true },
-                { name: "🛡️ AI Confidence", value: `${confidence}/100`, inline: true },
-                { name: "💼 Business Impact", value: impact },
-                { name: "📝 Executive Summary", value: summary }
-            ],
-            footer: { text: "T.R.O.N. Local Watcher • AI Pipeline" },
-            timestamp: new Date()
-        }]
-    };
+    // 🎨 FORMAT UNIVERSAL DESCRIPTION
+    // We combine the AI data into a clean Markdown string that Slack & Teams can easily render.
+    const description = `**🎯 Intent:** ${intent}\n**🛡️ AI Confidence:** ${confidence}/100\n**💼 Business Impact:** ${impact}\n\n**📝 Executive Summary:**\n${summary}`;
+    const colorHex = "#3447003"; // Enterprise Blue
+
+    // 🔀 DYNAMIC ROUTING
+    // Extract provider and webhook info (with fallbacks for older configs)
+    const provider = communicationConfig?.provider || 'discord';
+    const webhookUrl = communicationConfig?.webhook_url || communicationConfig; 
+
+    if (!webhookUrl) {
+        console.error("❌ [MESSENGER] No webhook URL configured for this project.");
+        return;
+    }
 
     try {
-        const isDiscordChannelId = /^\d+$/.test(webhookUrl);
-
-        if (isDiscordChannelId) {
-            console.log(`🤖 [MESSENGER] Using Discord Bot API for Channel ID: ${webhookUrl}`);
-            await axios.post(`https://discord.com/api/v10/channels/${webhookUrl}/messages`, discordPayload, {
-                headers: {
-                    'Authorization': `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+        if (provider === 'discord') {
+            await DiscordAdapter.sendToDiscord(webhookUrl, prTitle, description, prUrl, colorHex, aiResult);
+        } else if (provider === 'slack') {
+            await SlackAdapter.sendToSlack(webhookUrl, prTitle, description, prUrl, colorHex);
+        } else if (provider === 'teams') {
+            await TeamsAdapter.sendToTeams(webhookUrl, prTitle, description, prUrl, colorHex);
         } else {
-            console.log(`🔗 [MESSENGER] Using standard Webhook URL.`);
-            await axios.post(webhookUrl, discordPayload);
+            console.warn(`⚠️ [MESSENGER] Unknown communication provider: ${provider}`);
         }
-
-        console.log(`✅ [MESSENGER ADAPTER] Successfully broadcasted to the team!`);
-
     } catch (error) {
-        console.error(`❌ [MESSENGER ADAPTER] Failed to broadcast:`, error.message);
-        if (error.response) {
-            console.error("Messenger Error Details:", JSON.stringify(error.response.data));
-        }
+        console.error(`❌ [MESSENGER] Broadcast failed for provider [${provider}]:`, error.message);
     }
 }
 
