@@ -54,7 +54,7 @@ async function startWorker() {
                 console.log(`\n🔀 [PR EVENT] Action: ${action} | Title: "${prTitle}"`);
 
                 let taskIdentifier = null;
-                const branchMatch = branchName.match(/(\d{9,}|[A-Z]+-\d+)/); // Updated regex to catch Jira IDs too!
+                const branchMatch = branchName.match(/(\d{9,}|[A-Z]+-\d+)/); 
                 const titleMatch = prTitle.match(/(\d{9,}|[A-Z]+-\d+)/);
 
                 if (branchMatch) {
@@ -74,8 +74,7 @@ async function startWorker() {
                     console.log(`⏭️  Skipping PM update: No mapping found in tron.yaml for "${mappingKey}"`);
                 } else if (taskIdentifier && pmTool && pmTool.provider !== "none") {
                     try {
-                        console.log(`🚚 Moving ticket [${taskIdentifier}] to ${newStatus} in ${pmTool.provider}...`);
-                        // 🔀 THE FIX: Route through Orchestrator instead of direct Adapter
+                        console.log(`🚚 Moving ticket [${taskIdentifier}] to column ${newStatus} in ${pmTool.provider}...`);
                         await PMOrchestrator.updateTicketStatus(pmTool, taskIdentifier, newStatus);
                         console.log(`✅ Successfully moved ticket for PR ${action}!`);
                     } catch (error) {
@@ -115,7 +114,6 @@ async function startWorker() {
                         console.log(`🚀 Impact:   ${intelligenceReport.business_impact}`);
                         console.log(`--------------------------------\n`);
 
-                        // 🔀 THE FIX: Pass the new 'communication' object to the Messenger Orchestrator
                         const prUrl = job.payload.pull_request.html_url;
                         if (projectConfig.communication) {
                             await messengerAdapter.broadcastSummary(projectConfig.communication, prTitle, prUrl, intelligenceReport);
@@ -144,7 +142,7 @@ async function startWorker() {
 
                 try {
                     if (pmTool && pmTool.provider !== 'none') {
-                        // 🔀 THE FIX: Unified Orchestrator Call
+                        console.log(`🚚 Moving ticket [${taskID}] to branch_created column (${newStatus})...`);
                         await PMOrchestrator.updateTicketStatus(pmTool, taskID, newStatus);
                     }
                 } catch (adapterError) {
@@ -184,7 +182,6 @@ async function startWorker() {
                     const branchName = ref.replace('refs/heads/', '');
                     console.log(`\n🌿 [BRANCH EVENT] Detected branch: "${branchName}"`);
 
-                    // 🧠 THE MAGIC: Catch Basecamp IDs (9+ digits) OR Jira IDs (e.g. TRON-123)
                     const taskIdMatch = branchName.match(/(\d{9,}|[A-Z]+-\d+)/); 
 
                     if (taskIdMatch) {
@@ -199,7 +196,6 @@ async function startWorker() {
                         } else if (pmTool && pmTool.provider !== "none") {
                             try {
                                 console.log(`🚚 Moving ticket [${taskIdentifier}] to ${newStatus}...`);
-                                // 🔀 THE FIX: Unified Orchestrator Call
                                 await PMOrchestrator.updateTicketStatus(pmTool, taskIdentifier, newStatus);
                                 console.log(`✅ Successfully moved ticket!`);
                             } catch (error) {
