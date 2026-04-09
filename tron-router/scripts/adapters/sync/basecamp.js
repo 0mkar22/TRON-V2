@@ -94,22 +94,35 @@ class BasecampAdapter {
                 baseURL: `https://3.basecampapi.com/${accountId}`,
                 headers: {
                     'Authorization': `Bearer ${accessToken}`,
-                    'User-Agent': `T.R.O.N. Sync (${email})`
+                    'User-Agent': `T.R.O.N. Sync (${email})`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json' 
                 }
             });
 
-            // 1. Get Card Table ID
-            const tablesRes = await api.get(`/buckets/${projectId}/card_tables.json`);
-            if (tablesRes.data.length === 0) return [];
+            // 1. Fetch the project "Dock" to find the dynamic Kanban URL
+            const bucketRes = await api.get(`/buckets/${projectId}.json`);
             
-            const cardTableId = tablesRes.data[0].id;
+            const kanbanTool = bucketRes.data.dock.find(tool => tool.name === 'kanban_board');
+            
+            if (!kanbanTool) {
+                console.warn(`⚠️ No Card Table (kanban_board) active on project ${projectId}.`);
+                return [];
+            }
 
-            // 2. Get Lists (Columns)
-            const listsRes = await api.get(`/buckets/${projectId}/card_tables/${cardTableId}/lists.json`);
+            // 2. Fetch the Kanban Board object
+            const tableRes = await api.get(kanbanTool.url);
             
-            return listsRes.data.map(col => ({
+            // 3. Extract the inline lists (columns) directly from the object!
+            if (!tableRes.data.lists || !Array.isArray(tableRes.data.lists)) {
+                console.warn(`⚠️ No columns found inside the Kanban Board.`);
+                return [];
+            }
+
+            // Map the ID and TITLE (Basecamp uses "title" for column names)
+            return tableRes.data.lists.map(col => ({
                 id: col.id.toString(),
-                name: col.name
+                name: col.title 
             }));
         } catch (error) {
             console.error(`❌ [BASECAMP SYNC] Failed to fetch columns for project ${projectId}:`, error.message);

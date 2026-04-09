@@ -142,19 +142,35 @@ async function runSync() {
                     );
 
                     if (columns.length > 0) {
-                        // Helper to find column IDs by keyword
+                        const usedIds = new Set(); // 🛡️ THE UNIQUENESS ENFORCER
+
                         const getColId = (keywords) => {
-                            const found = columns.find(c => keywords.some(k => c.name.toLowerCase().includes(k)));
-                            return found ? found.id.toString() : columns[0].id.toString(); 
+                            // 1. Look for a keyword match that HAS NOT been used yet
+                            let found = columns.find(c => {
+                                if (usedIds.has(c.id)) return false;
+                                
+                                const colName = c.name.toLowerCase();
+                                // Basic prevention of "complete" matching "incomplete"
+                                return keywords.some(k => colName.includes(k) && !colName.includes('in' + k));
+                            });
+
+                            // 2. Fallback: If no keyword matches, grab the first UNUSED column
+                            if (!found) {
+                                found = columns.find(c => !usedIds.has(c.id)) || columns[0];
+                            }
+
+                            // 3. Lock the ID so it can't be used again
+                            usedIds.add(found.id);
+                            return found.id;
                         };
 
                         projectBlock.mapping = {
-                            todo_column: getColId(['todo', 'to do', 'backlog']),
-                            branch_created: getColId(['progress', 'doing', 'active']),
-                            pull_request_opened: getColId(['review', 'pr', 'testing']),
+                            todo_column: getColId(['todo', 'to do', 'to-do', 'backlog']),
+                            branch_created: getColId(['in progress', 'doing', 'active']),
+                            pull_request_opened: getColId(['in review','under review', 'pr', 'testing']),
                             pull_request_closed: getColId(['done', 'complete', 'merged', 'finish'])
                         };
-                        console.log(`  ✅ Automatically mapped Column IDs for Basecamp!`);
+                        console.log(`  ✅ Automatically mapped UNIQUE Column IDs for Basecamp!`);
                     } else {
                         console.log(`  ⚠️ No columns found on this board. Defaulting to placeholders.`);
                     }

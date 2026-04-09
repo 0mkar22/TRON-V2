@@ -1,25 +1,13 @@
 projects:
-  - repo: 0mkar22/CodSoft-Python-Programming
-    pm_tool:
-      provider: basecamp
-      board_id: '46353317'
-    mapping:
-      todo_column: To Do
-      branch_created: In Progress
-      pull_request_opened: Under Review
-      pull_request_closed: Done
-    communication:
-      provider: discord
-      webhook_url: '1026907095343300661'
   - repo: 0mkar22/git-playground
     pm_tool:
       provider: basecamp
       board_id: '46353315'
     mapping:
-      todo_column: To Do
-      branch_created: In Progress
-      pull_request_opened: Under Review
-      pull_request_closed: Done
+      todo_column: '9641640739'
+      branch_created: '9732496551'
+      pull_request_opened: '9732495420'
+      pull_request_closed: '9641640742'
     communication:
       provider: discord
       webhook_url: '1488839523784855684'
