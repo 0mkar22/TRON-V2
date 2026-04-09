@@ -29,11 +29,10 @@ class PMOrchestrator {
         }
     }
 
-    // 🛡️ Added 'mapping' as the third parameter
-    static async createTicket(pmConfig, taskName, mapping) {
+    static async resolveTask(pmConfig, taskName, mapping) {
         const provider = pmConfig.provider || 'basecamp';
         if (provider === 'basecamp') {
-            return await BasecampAdapter.createTask(pmConfig.board_id, mapping.todo_column, taskName);
+            return await BasecampAdapter.resolveTask(pmConfig.board_id, mapping.todo_column, taskName);
         } else if (provider === 'jira' || provider === 'monday') {
             return taskName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
         }

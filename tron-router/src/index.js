@@ -48,9 +48,10 @@ app.post('/api/start-task', async (req, res) => {
     try {
         let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Fallback sanitized string
 
-        // 🔀 3. Route task creation through the Orchestrator
+        // 🔀 3. Route task resolution through the Orchestrator
         if (projectConfig.pm_tool && projectConfig.pm_tool.provider !== "none") {
-            resolvedTaskID = await PMOrchestrator.createTicket(projectConfig.pm_tool, taskInput, projectConfig.mapping);
+            // THE FIX: Calling resolveTask instead of createTicket
+            resolvedTaskID = await PMOrchestrator.resolveTask(projectConfig.pm_tool, taskInput, projectConfig.mapping);
         }
 
         // 📦 4. Send Job to the Worker Queue

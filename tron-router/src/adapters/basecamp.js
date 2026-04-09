@@ -92,20 +92,46 @@ async function updateTicketStatus(taskID, newStatusID, boardID) {
 }
 
 // ==========================================
-// 3. CREATE: NEW TASK IN COLUMN
+// 3. AUTO-RESOLVE: FIND OR CREATE TASK
 // ==========================================
-async function createTask(boardID, todoColumnID, taskName) {
-    console.log(`✨ [BASECAMP ADAPTER] Auto-creating new ticket: "${taskName}"`);
+async function resolveTask(boardID, todoColumnID, taskInput) {
+    console.log(`\n🔍 [BASECAMP ADAPTER] Resolving Task: "${taskInput}"`);
     await syncToken();
     try {
+        // 1. Check if the daemon passed a raw ID directly
+        const rawIdMatch = taskInput.match(/\d{8,}/);
+        if (rawIdMatch) {
+            console.log(`✅ [BASECAMP ADAPTER] Raw ID detected.`);
+            return rawIdMatch[0];
+        }
+
+        // 2. Fetch the To-Do column to look for the ticket
+        const listResponse = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
+        const existingCards = listResponse.data;
+
+        // 3. Search for a matching title
+        const foundCard = existingCards.find(card => 
+            card.title.toLowerCase().includes(taskInput.toLowerCase()) || 
+            taskInput.toLowerCase().includes(card.title.toLowerCase())
+        );
+
+        if (foundCard) {
+            console.log(`✅ [BASECAMP ADAPTER] Found existing card! ID: ${foundCard.id}`);
+            return foundCard.id.toString();
+        }
+
+        // 4. Fallback: Create new ticket if it doesn't exist
+        console.log(`✨ [BASECAMP ADAPTER] Card not found. Auto-creating new ticket: "${taskInput}"`);
         const createResponse = await basecampAPI.post(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`, {
-            title: taskName
+            title: taskInput
         });
         return createResponse.data.id.toString();
+
     } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to create task:`, error.message);
-        return taskName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        console.error(`❌ [BASECAMP ADAPTER] Failed to resolve task:`, error.message);
+        return taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     }
 }
 
-module.exports = { fetchActiveTasks, updateTicketStatus, createTask };
+// Ensure you export resolveTask instead of createTask at the very bottom!
+module.exports = { fetchActiveTasks, updateTicketStatus, resolveTask };
