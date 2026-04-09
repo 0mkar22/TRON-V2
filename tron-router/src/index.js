@@ -50,7 +50,7 @@ app.post('/api/start-task', async (req, res) => {
 
         // 🔀 3. Route task creation through the Orchestrator
         if (projectConfig.pm_tool && projectConfig.pm_tool.provider !== "none") {
-            resolvedTaskID = await PMOrchestrator.createTicket(projectConfig.pm_tool, taskInput);
+            resolvedTaskID = await PMOrchestrator.createTicket(projectConfig.pm_tool, taskInput, projectConfig.mapping);
         }
 
         // 📦 4. Send Job to the Worker Queue
