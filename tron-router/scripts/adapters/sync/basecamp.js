@@ -88,6 +88,34 @@ class BasecampAdapter {
             return [];
         }
     }
+    static async fetchColumns(accountId, accessToken, projectId, email = "admin@tron.local") {
+        try {
+            const api = axios.create({
+                baseURL: `https://3.basecampapi.com/${accountId}`,
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'User-Agent': `T.R.O.N. Sync (${email})`
+                }
+            });
+
+            // 1. Get Card Table ID
+            const tablesRes = await api.get(`/buckets/${projectId}/card_tables.json`);
+            if (tablesRes.data.length === 0) return [];
+            
+            const cardTableId = tablesRes.data[0].id;
+
+            // 2. Get Lists (Columns)
+            const listsRes = await api.get(`/buckets/${projectId}/card_tables/${cardTableId}/lists.json`);
+            
+            return listsRes.data.map(col => ({
+                id: col.id.toString(),
+                name: col.name
+            }));
+        } catch (error) {
+            console.error(`❌ [BASECAMP SYNC] Failed to fetch columns for project ${projectId}:`, error.message);
+            return [];
+        }
+    }
 }
 
 module.exports = BasecampAdapter;

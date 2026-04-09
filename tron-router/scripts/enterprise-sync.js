@@ -47,10 +47,7 @@ async function runSync() {
 
     if (process.env.BASECAMP_ACCESS_TOKEN && process.env.BASECAMP_ACCOUNT_ID) {
         console.log("  ✅ Basecamp detected. Fetching projects...");
-        // ❌ OLD LINE:
-        // const bcProjects = await BasecampAdapter.fetchProjects(process.env.BASECAMP_ACCESS_TOKEN, process.env.BASECAMP_ACCOUNT_ID);
         
-        // ✅ NEW LINE:
         const bcProjects = await BasecampAdapter.fetchBoards(
             process.env.BASECAMP_ACCOUNT_ID, 
             process.env.BASECAMP_ACCESS_TOKEN, 
@@ -63,9 +60,6 @@ async function runSync() {
 
     if (process.env.JIRA_API_TOKEN && process.env.JIRA_DOMAIN && process.env.JIRA_EMAIL) {
         console.log("  ✅ Jira detected. Fetching projects...");
-        // Note: You might need to add a specific `fetchProjects()` method to JiraAdapter if it doesn't exist, 
-        // or just ask the user to type the Jira Key manually later. For now, let's assume you have a way to list them,
-        // or we can just offer "Jira" as a manual text-entry option below.
         console.log("  ⚠️ Jira Projects currently require manual Project Key entry during mapping.");
     }
 
@@ -137,6 +131,34 @@ async function runSync() {
             if (pmIndex >= 0 && pmIndex < availablePmBoards.length) {
                 const selectedBoard = availablePmBoards[pmIndex];
                 projectBlock.pm_tool = { provider: selectedBoard.provider, board_id: selectedBoard.id.toString() };
+
+                // 🧠 THE MAGIC: Auto-fetch and map Basecamp Column IDs!
+                if (selectedBoard.provider === 'basecamp') {
+                    console.log(`  🔄 Fetching columns for Basecamp Project: ${selectedBoard.name}...`);
+                    const columns = await BasecampAdapter.fetchColumns(
+                        process.env.BASECAMP_ACCOUNT_ID, 
+                        process.env.BASECAMP_ACCESS_TOKEN, 
+                        selectedBoard.id
+                    );
+
+                    if (columns.length > 0) {
+                        // Helper to find column IDs by keyword
+                        const getColId = (keywords) => {
+                            const found = columns.find(c => keywords.some(k => c.name.toLowerCase().includes(k)));
+                            return found ? found.id.toString() : columns[0].id.toString(); 
+                        };
+
+                        projectBlock.mapping = {
+                            todo_column: getColId(['todo', 'to do', 'backlog']),
+                            branch_created: getColId(['progress', 'doing', 'active']),
+                            pull_request_opened: getColId(['review', 'pr', 'testing']),
+                            pull_request_closed: getColId(['done', 'complete', 'merged', 'finish'])
+                        };
+                        console.log(`  ✅ Automatically mapped Column IDs for Basecamp!`);
+                    } else {
+                        console.log(`  ⚠️ No columns found on this board. Defaulting to placeholders.`);
+                    }
+                }
             }
         }
 
