@@ -123,25 +123,17 @@ app.get(['/api/project/:owner/:repo/tickets', '/api/project/:encodedRepo/tickets
         ? decodeURIComponent(req.params.encodedRepo) 
         : `${req.params.owner}/${req.params.repo}`;
 
-    console.log(`\n📡 [API] Fetching tickets requested for repo: "${repo}"`);
-
-    // 🛡️ THE FIX: Load the config directly so it never crashes on 'undefined'
     const tronConfig = loadConfig();
-    
-    if (!tronConfig || !tronConfig.projects) {
-        console.error("❌ [API] tron.yaml is missing or malformed!");
-        return res.status(500).json({ error: "Server configuration missing." });
-    }
-
-    const config = tronConfig.projects.find(p => p.repo === repo);
+    const config = tronConfig?.projects?.find(p => p.repo === repo);
     
     if (!config) {
-        console.warn(`⚠️ [API] Repo "${repo}" not found in tron.yaml!`);
         return res.status(404).json({ error: "Repository not registered in tron.yaml" });
     }
 
     try {
-        const tasks = await PMOrchestrator.getTickets(config.pm_tool);
+        // 🛡️ CRITICAL FIX: We are passing BOTH config.pm_tool and config.mapping
+        const tasks = await PMOrchestrator.getTickets(config.pm_tool, config.mapping);
+        
         res.json({ tickets: tasks }); 
         console.log(`✅ [API] Sent ${tasks.length} tickets to the Daemon.`);
     } catch (error) {
