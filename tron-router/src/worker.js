@@ -7,7 +7,6 @@ const aiAdapter = require('./adapters/ai');
 const messengerAdapter = require('./adapters/messenger');
 
 const redis = new Redis(process.env.REDIS_URL);
-const config = loadConfig();
 
 // 🛡️ ARCHITECTURE FIX: Sleep helper for Exponential Backoff
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,6 +26,9 @@ async function startWorker() {
 
             console.log(`\n⚙️  Processing Delivery ID: [${job.deliveryId}]`);
 
+            // 🧠 THE FIX: Dynamically load the config on EVERY job!
+            const config = loadConfig();
+
             const repoName = job.payload.repository?.full_name;
             if (!repoName) {
                 console.log('⏭️  Skipping: Payload does not contain a repository name.');
@@ -34,7 +36,7 @@ async function startWorker() {
                 continue;
             }
 
-            const projectConfig = config.projects.find(p => p.repo === repoName);
+            const projectConfig = config?.projects?.find(p => p.repo === repoName);
             if (!projectConfig) {
                 console.log(`⏭️  Skipping: No configuration found in tron.yaml for repo "${repoName}"`);
                 await redis.lrem('tron:webhook_processing', 1, currentJobString);
