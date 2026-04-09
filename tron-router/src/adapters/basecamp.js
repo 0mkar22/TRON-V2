@@ -15,7 +15,7 @@ const basecampAPI = axios.create({
     headers: {
         'Authorization': `Bearer ${BASECAMP_ACCESS_TOKEN}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'T.R.O.N. Integration (your-email@example.com)'
+        'User-Agent': 'T.R.O.N. Integration (admin@tron.local)'
     }
 });
 
@@ -93,92 +93,95 @@ basecampAPI.interceptors.response.use(
 );
 
 // ==========================================
-// 🔍 NEW: FETCH TICKETS FOR GO DAEMON MENU
+// 🔍 HELPER: DYNAMIC COLUMN DISCOVERY
 // ==========================================
-async function getTicketsInColumn(boardID, todoColumnID) {
-    console.log(`\n📋 [BASECAMP ADAPTER] Fetching open tickets for Project: ${boardID}`);
-    
+async function getProjectColumns(boardID) {
     await syncToken();
+    // 1. Get the Card Table ID for the project (Basecamp usually has 1 per project)
+    const tablesRes = await basecampAPI.get(`/buckets/${boardID}/card_tables.json`);
+    if (tablesRes.data.length === 0) throw new Error("No Card Table found in this Basecamp project.");
+    
+    const cardTableId = tablesRes.data[0].id;
 
+    // 2. Fetch the actual lists (columns) inside that Card Table
+    const listsRes = await basecampAPI.get(`/buckets/${boardID}/card_tables/${cardTableId}/lists.json`);
+    return listsRes.data;
+}
+
+// ==========================================
+// 1. READ: FETCH TICKETS FOR GO DAEMON MENU
+// ==========================================
+async function fetchActiveTasks(boardID) {
+    console.log(`\n📋 [BASECAMP ADAPTER] Fetching open tickets for Project: ${boardID}`);
     try {
-        const response = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
+        const columns = await getProjectColumns(boardID);
+        // Look for a column named "To Do" or fallback to the first column
+        const todoCol = columns.find(c => c.name.toLowerCase().includes('to do') || c.name.toLowerCase().includes('todo')) || columns[0];
+
+        const response = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoCol.id}/cards.json`);
         
-        // Map to a clean list for the Go Daemon to display
         return response.data.map(card => ({
             id: card.id.toString(),
             title: card.title
         }));
     } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to fetch tickets for menu.`);
+        console.error(`❌ [BASECAMP ADAPTER] Failed to fetch tickets:`, error.message);
+        return [];
+    }
+}
+
+// ==========================================
+// 2. WRITE: MOVE TICKET STATUS
+// ==========================================
+async function updateTicketStatus(taskID, newStatusText, boardID) {
+    console.log(`[BASECAMP ADAPTER] Locating column ID for status: "${newStatusText}"...`);
+    const pureCardID = taskID.replace(/\D/g, '');
+
+    try {
+        const columns = await getProjectColumns(boardID);
+        const targetColumn = columns.find(col => col.name.toLowerCase() === newStatusText.toLowerCase());
+
+        if (!targetColumn) {
+            console.warn(`⚠️ [BASECAMP ADAPTER] Status "${newStatusText}" not found. Available: ${columns.map(c=>c.name).join(', ')}`);
+            return false;
+        }
+
+        console.log(`[BASECAMP ADAPTER] Moving ticket ${pureCardID} to column ID: ${targetColumn.id}`);
+        await basecampAPI.post(`/buckets/${boardID}/card_tables/cards/${pureCardID}/moves.json`, {
+            column_id: targetColumn.id
+        });
+
+        console.log(`🏕️  [BASECAMP ADAPTER] ✅ Successfully moved card to "${newStatusText}"`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [BASECAMP ADAPTER] Failed to update ticket status:`, error.response?.data || error.message);
         throw error;
     }
 }
 
 // ==========================================
-// AUTO-RESOLVE ENGINE (SEARCH & CREATE)
+// 3. CREATE: AUTO-RESOLVE ENGINE
 // ==========================================
-async function resolveTask(taskInput, boardID, todoColumnID) {
-    console.log(`\n🔍 [BASECAMP ADAPTER] Resolving Task: "${taskInput}"`);
-
-    await syncToken();
-
-    if (!BASECAMP_ACCESS_TOKEN || BASECAMP_ACCOUNT_ID.includes('here')) {
-        return `SIM-${Math.floor(Math.random() * 10000)}`;
-    }
-
+async function createTask(boardID, taskName) {
+    console.log(`✨ [BASECAMP ADAPTER] Auto-creating new ticket: "${taskName}"`);
     try {
-        const rawIdMatch = taskInput.match(/\d{8,}/);
-        if (rawIdMatch) {
-            console.log(`✅ [BASECAMP ADAPTER] Detected raw ID input. Bypassing search.`);
-            return rawIdMatch[0];
-        }
+        const columns = await getProjectColumns(boardID);
+        const todoCol = columns.find(c => c.name.toLowerCase().includes('to do') || c.name.toLowerCase().includes('todo')) || columns[0];
 
-        const listResponse = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
-        const existingCards = listResponse.data;
-
-        const foundCard = existingCards.find(card => card.title.toLowerCase().includes(taskInput.toLowerCase()));
-
-        if (foundCard) {
-            console.log(`✅ [BASECAMP ADAPTER] Found existing card! ID: ${foundCard.id}`);
-            return foundCard.id.toString();
-        }
-
-        console.log(`✨ [BASECAMP ADAPTER] Card not found. Auto-creating new ticket: "${taskInput}"`);
-        const createResponse = await basecampAPI.post(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`, {
-            title: taskInput
+        const createResponse = await basecampAPI.post(`/buckets/${boardID}/card_tables/lists/${todoCol.id}/cards.json`, {
+            title: taskName
         });
 
         return createResponse.data.id.toString();
     } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Resolve Engine Failed.`);
-        throw error;
-    }
-}
-
-// ==========================================
-// THE CORE LOGIC (KANBAN CARD TABLE)
-// ==========================================
-async function updateTicketStatus(taskID, newStatus, boardID) {
-    const pureCardID = taskID.replace(/\D/g, '');
-    const destinationColumnID = parseInt(newStatus);
-
-    await syncToken();
-
-    try {
-        const response = await basecampAPI.post(`/buckets/${boardID}/card_tables/cards/${pureCardID}/moves.json`, {
-            column_id: destinationColumnID
-        });
-
-        console.log(`🏕️  [BASECAMP ADAPTER] ✅ Successfully moved card! Status: ${response.status}`);
-        return true;
-    } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to update Basecamp.`);
-        throw error;
+        console.error(`❌ [BASECAMP ADAPTER] Failed to create task:`, error.message);
+        // Safe fallback for the daemon to still create a branch
+        return taskName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     }
 }
 
 module.exports = { 
+    fetchActiveTasks,
     updateTicketStatus, 
-    resolveTask, 
-    getTicketsInColumn 
+    createTask
 };
