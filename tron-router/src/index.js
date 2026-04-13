@@ -24,56 +24,28 @@ app.use(express.json({
 // DAEMON API: START TASK
 // ==========================================
 app.post('/api/start-task', async (req, res) => {
-    // 🛡️ 1. Security & Payload Validation
-    const apiKey = req.headers['x-api-key'];
-    if (apiKey !== process.env.DAEMON_API_KEY) {
-        return res.status(401).send({ error: 'Unauthorized' });
-    }
+    const { taskInput, repoName } = req.body;
+    const config = loadConfig().projects.find(p => p.repo === repoName);
 
-    const { taskInput, repoName, repoId } = req.body;
-    if (!taskInput || !repoName) {
-        return res.status(400).send({ error: 'Missing payload data' });
-    }
-
-    console.log(`\n🔥 Local Daemon requested task resolution for: [${taskInput}] in [${repoName}]`);
-
-    // 🧠 2. Dynamic Config Loading
-    const tronConfig = loadConfig();
-    const projectConfig = tronConfig?.projects?.find(p => p.repo === repoName);
-
-    if (!projectConfig) {
-        return res.status(404).send({ error: 'Repository not configured in tron.yaml' });
-    }
+    let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Default fallback
 
     try {
-        let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Fallback sanitized string
-
-        // 🔀 3. Route task resolution through the Orchestrator
-        if (projectConfig.pm_tool && projectConfig.pm_tool.provider !== "none") {
-            // THE FIX: Calling resolveTask instead of createTicket
-            resolvedTaskID = await PMOrchestrator.resolveTask(projectConfig.pm_tool, taskInput, projectConfig.mapping);
+        // 1. Hand off to Orchestrator (Index.js doesn't know HOW it resolves the task)
+        if (config && config.pm_tool && config.pm_tool.provider !== "none") {
+            resolvedTaskID = await PMOrchestrator.resolveTask(config.pm_tool, taskInput, config.mapping);
         }
 
-        // 📦 4. Send Job to the Worker Queue
-        const queueJob = {
-            deliveryId: `local-${Date.now()}`,
+        // 2. Fire the Background Worker Event
+        await redis.lpush('tron:webhook_queue', JSON.stringify({
             eventType: 'local_start',
-            payload: {
-                taskId: resolvedTaskID,
-                repository: { full_name: repoName }
-            }
-        };
-        await redis.lpush('tron:webhook_queue', JSON.stringify(queueJob));
+            payload: { taskId: resolvedTaskID, repository: { full_name: repoName } }
+        }));
 
-        // 📤 5. Respond back to the Go Daemon
-        res.status(200).send({ resolvedId: resolvedTaskID });
+        // 3. Honor the Go Daemon's exact expected JSON contract
+        res.json({ resolvedId: resolvedTaskID });
 
     } catch (error) {
-        console.error('❌ Failed to resolve task via Orchestrator:', error.message);
-        
-        // Graceful fallback so the Go Daemon can still create a branch
-        const fallbackId = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-        res.status(500).send({ resolvedId: fallbackId });
+        res.status(500).json({ error: "Task resolution failed." });
     }
 });
 
@@ -119,27 +91,21 @@ app.get('/api/projects', (req, res) => {
 // ==========================================
 // 🔍 NEW: FETCH TICKETS FOR GO DAEMON
 // ==========================================
-app.get(['/api/project/:owner/:repo/tickets', '/api/project/:encodedRepo/tickets'], async (req, res) => {
-    const repo = req.params.encodedRepo 
-        ? decodeURIComponent(req.params.encodedRepo) 
-        : `${req.params.owner}/${req.params.repo}`;
-
-    const tronConfig = loadConfig();
-    const config = tronConfig?.projects?.find(p => p.repo === repo);
+app.get('/api/project/:encodedRepo/tickets', async (req, res) => {
+    const repo = decodeURIComponent(req.params.encodedRepo);
+    const config = loadConfig().projects.find(p => p.repo === repo);
     
-    if (!config) {
-        return res.status(404).json({ error: "Repository not registered in tron.yaml" });
-    }
+    // 1. Validate
+    if (!config || config.pm_tool.provider === "none") return res.json({ tickets: [] });
 
     try {
-        // 🛡️ CRITICAL FIX: We are passing BOTH config.pm_tool and config.mapping
-        const tasks = await PMOrchestrator.getTickets(config.pm_tool, config.mapping);
+        // 2. Hand off to Orchestrator (Index.js doesn't know HOW it gets the tickets)
+        const activeTickets = await PMOrchestrator.getTickets(config.pm_tool, config.mapping);
         
-        res.json({ tickets: tasks }); 
-        console.log(`✅ [API] Sent ${tasks.length} tickets to the Daemon.`);
+        // 3. Honor the Go Daemon's exact expected JSON contract
+        res.json({ tickets: activeTickets }); 
     } catch (error) {
-        console.error("❌ [API] Failed to fetch tickets:", error.message);
-        res.status(500).json({ error: "Failed to fetch active tasks." });
+        res.status(500).json({ error: "Failed to fetch tickets." });
     }
 });
 
