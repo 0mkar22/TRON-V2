@@ -134,6 +134,25 @@ app.get('/api/project/:encodedRepo/tickets', async (req, res) => {
     }
 });
 
+// ==========================================
+// 🌟 NEW: FETCH AI REVIEW FOR VS CODE
+// ==========================================
+app.get('/api/review/:taskId', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const review = await redis.get(`ai_review:${taskId}`);
+        
+        if (!review) {
+            return res.status(404).json({ error: "No AI review found for this task yet." });
+        }
+        
+        res.json({ review });
+    } catch (error) {
+        console.error("❌ Failed to fetch AI review:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
 app.listen(port, () => {
     console.log(`\n🌐 T.R.O.N. Cloud Router listening at http://localhost:${port}`);
 });

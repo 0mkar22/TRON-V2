@@ -102,6 +102,12 @@ async function startWorker() {
                         console.log(`🕵️‍♂️ Analyzing diff for bugs...`);
                         const codeReview = await aiAdapter.generateCodeReview(sanitizedDiff);
                         
+                        // 🌟 NEW: Store the review in Redis for 7 days (604800 seconds)
+                        if (taskIdentifier) {
+                            await redis.set(`ai_review:${taskIdentifier}`, codeReview, 'EX', 604800);
+                            console.log(`💾 Saved AI Code Review to Redis for Task [${taskIdentifier}]`);
+                        }
+                        
                         console.log(`💬 Posting Code Review to GitHub PR #${prNumber}...`);
                         const commentHeader = `### 🤖 T.R.O.N. Automated Code Review\n\n`;
                         await githubAdapter.postPullRequestComment(repoFullName, prNumber, commentHeader + codeReview);
