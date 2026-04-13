@@ -1,137 +1,93 @@
+// src/adapters/basecamp.js
 const axios = require('axios');
-const Redis = require('ioredis');
 
-const redis = new Redis(process.env.REDIS_URL);
-const BASECAMP_ACCOUNT_ID = process.env.BASECAMP_ACCOUNT_ID;
-let BASECAMP_ACCESS_TOKEN = process.env.BASECAMP_ACCESS_TOKEN;
-const REFRESH_TOKEN = process.env.BASECAMP_REFRESH_TOKEN;
-const CLIENT_ID = process.env.BASECAMP_CLIENT_ID;
-const CLIENT_SECRET = process.env.BASECAMP_CLIENT_SECRET;
-
-const basecampAPI = axios.create({
-    baseURL: `https://3.basecampapi.com/${BASECAMP_ACCOUNT_ID}`,
-    headers: {
-        'Authorization': `Bearer ${BASECAMP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json', // 🛡️ Bypasses Basecamp 406 Errors
-        'User-Agent': 'T.R.O.N. Integration (admin@tron.local)'
+class BasecampAdapter {
+    static getBaseConfig() {
+        return {
+            headers: {
+                'Authorization': `Bearer ${process.env.BASECAMP_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json',
+                'User-Agent': 'TRON-API (admin@tron.local)'
+            }
+        };
     }
-});
 
-async function syncToken() {
-    const vaultToken = await redis.get('tron:basecamp_access_token');
-    if (vaultToken) {
-        BASECAMP_ACCESS_TOKEN = vaultToken;
-        basecampAPI.defaults.headers['Authorization'] = `Bearer ${vaultToken}`;
+    static getBaseUrl(projectId) {
+        return `https://3.basecampapi.com/${process.env.BASECAMP_ACCOUNT_ID}/buckets/${projectId}`;
     }
-}
 
-async function refreshAccessToken() {
-    const lockKey = 'tron:basecamp_refresh_lock';
-    const acquiredLock = await redis.set(lockKey, 'LOCKED', 'NX', 'EX', 10);
-    if (!acquiredLock) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return await redis.get('tron:basecamp_access_token');
-    }
-    try {
-        const response = await axios.post('https://launchpad.37signals.com/authorization/token', null, {
-            params: { type: 'refresh', refresh_token: REFRESH_TOKEN, client_id: CLIENT_ID, client_secret: CLIENT_SECRET }
-        });
-        await redis.set('tron:basecamp_access_token', response.data.access_token);
-        return response.data.access_token;
-    } finally {
-        await redis.del(lockKey);
-    }
-}
-
-basecampAPI.interceptors.response.use((response) => response, async (error) => {
-    const originalRequest = error.config;
-    if (error.response && error.response.status === 401 && !originalRequest._retry) {
-        originalRequest._retry = true;
-        const newToken = await refreshAccessToken();
-        BASECAMP_ACCESS_TOKEN = newToken;
-        basecampAPI.defaults.headers['Authorization'] = `Bearer ${newToken}`;
-        originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
-        return basecampAPI(originalRequest);
-    }
-    return Promise.reject(error);
-});
-
-// ==========================================
-// 1. READ: FETCH TICKETS USING COLUMN ID
-// ==========================================
-async function fetchActiveTasks(boardID, todoColumnID) {
-    console.log(`\n📋 [BASECAMP ADAPTER] Fetching open tickets from Column: ${todoColumnID}`);
-    await syncToken();
-    try {
-        const response = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
-        return response.data.map(card => ({ id: card.id.toString(), title: card.title }));
-    } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to fetch tickets:`, error.message);
-        return [];
-    }
-}
-
-// ==========================================
-// 2. WRITE: MOVE TICKET USING COLUMN ID
-// ==========================================
-async function updateTicketStatus(taskID, newStatusID, boardID) {
-    const pureCardID = taskID.replace(/\D/g, '');
-    console.log(`[BASECAMP ADAPTER] Moving ticket ${pureCardID} to column ID: ${newStatusID}`);
-    await syncToken();
-    try {
-        await basecampAPI.post(`/buckets/${boardID}/card_tables/cards/${pureCardID}/moves.json`, {
-            column_id: parseInt(newStatusID)
-        });
-        console.log(`🏕️  [BASECAMP ADAPTER] ✅ Successfully moved card`);
-        return true;
-    } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to update ticket status:`, error.message);
-        throw error;
-    }
-}
-
-// ==========================================
-// 3. AUTO-RESOLVE: FIND OR CREATE TASK
-// ==========================================
-async function resolveTask(boardID, todoColumnID, taskInput) {
-    console.log(`\n🔍 [BASECAMP ADAPTER] Resolving Task: "${taskInput}"`);
-    await syncToken();
-    try {
-        // 1. Check if the daemon passed a raw ID directly
-        const rawIdMatch = taskInput.match(/\d{8,}/);
-        if (rawIdMatch) {
-            console.log(`✅ [BASECAMP ADAPTER] Raw ID detected.`);
-            return rawIdMatch[0];
+    // ==========================================
+    // 1. Fetch Active Tasks (The 404 Fix)
+    // ==========================================
+    static async fetchActiveTasks(projectId, columnId) {
+        if (!columnId || columnId === 'undefined') {
+            console.error('❌ [BASECAMP] Column ID is undefined. Check your tron.yaml mapping.');
+            return [];
         }
 
-        // 2. Fetch the To-Do column to look for the ticket
-        const listResponse = await basecampAPI.get(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`);
-        const existingCards = listResponse.data;
+        try {
+            // Hit the Basecamp Card Tables API specifically
+            const response = await axios.get(
+                `${this.getBaseUrl(projectId)}/card_tables/lists/${columnId}/cards.json`,
+                this.getBaseConfig()
+            );
 
-        // 3. Search for a matching title
-        const foundCard = existingCards.find(card => 
-            card.title.toLowerCase().includes(taskInput.toLowerCase()) || 
-            taskInput.toLowerCase().includes(card.title.toLowerCase())
-        );
-
-        if (foundCard) {
-            console.log(`✅ [BASECAMP ADAPTER] Found existing card! ID: ${foundCard.id}`);
-            return foundCard.id.toString();
+            // Honor the Orchestrator's strict GET contract
+            return response.data.map(card => ({
+                id: card.id.toString(),
+                title: card.title
+            }));
+        } catch (error) {
+            console.error(`❌ [BASECAMP] Fetch Tasks Error:`, error.response?.data || error.message);
+            return [];
         }
+    }
 
-        // 4. Fallback: Create new ticket if it doesn't exist
-        console.log(`✨ [BASECAMP ADAPTER] Card not found. Auto-creating new ticket: "${taskInput}"`);
-        const createResponse = await basecampAPI.post(`/buckets/${boardID}/card_tables/lists/${todoColumnID}/cards.json`, {
-            title: taskInput
-        });
-        return createResponse.data.id.toString();
+    // ==========================================
+    // 2. Resolve Task (The Duplicate Fix)
+    // ==========================================
+    static async resolveTask(projectId, todoColumnId, taskName) {
+        try {
+            // STEP 1: Search the To-Do column for an exact match
+            const existingTasks = await this.fetchActiveTasks(projectId, todoColumnId);
+            const duplicate = existingTasks.find(t => t.title.trim().toLowerCase() === taskName.trim().toLowerCase());
 
-    } catch (error) {
-        console.error(`❌ [BASECAMP ADAPTER] Failed to resolve task:`, error.message);
-        return taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+            if (duplicate) {
+                console.log(`♻️  [BASECAMP] Task "${taskName}" already exists. Reusing ID [${duplicate.id}].`);
+                return duplicate.id;
+            }
+
+            // STEP 2: Only create if no match was found
+            console.log(`✨ [BASECAMP] Creating new task: "${taskName}"`);
+            const response = await axios.post(
+                `${this.getBaseUrl(projectId)}/card_tables/lists/${todoColumnId}/cards.json`,
+                { title: taskName, content: "Created by T.R.O.N." },
+                this.getBaseConfig()
+            );
+
+            return response.data.id.toString();
+        } catch (error) {
+            console.error(`❌ [BASECAMP] Create Task Error:`, error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    // ==========================================
+    // 3. Move Ticket
+    // ==========================================
+    static async updateTicketStatus(ticketId, newColumnId, projectId) {
+        try {
+            // Basecamp Card Tables use a specific 'moves' endpoint
+            await axios.post(
+                `${this.getBaseUrl(projectId)}/card_tables/cards/${ticketId}/moves.json`,
+                { column_id: newColumnId }, 
+                this.getBaseConfig()
+            );
+            console.log(`✅ [BASECAMP] Moved ticket [${ticketId}] to column [${newColumnId}]`);
+        } catch (error) {
+            console.error(`❌ [BASECAMP] Move Task Error:`, error.response?.data || error.message);
+        }
     }
 }
 
-// Ensure you export resolveTask instead of createTask at the very bottom!
-module.exports = { fetchActiveTasks, updateTicketStatus, resolveTask };
+module.exports = BasecampAdapter;
