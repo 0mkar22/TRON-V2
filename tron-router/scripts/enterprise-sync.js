@@ -8,13 +8,10 @@ const yaml = require('js-yaml');
 // Import all Adapters
 const GithubAdapter = require('./adapters/sync/github');
 const BasecampAdapter = require('./adapters/sync/basecamp');
-// Note: We are using the main adapter folder for Jira/Monday since they don't have separate sync scripts yet
 const JiraAdapter = require('../src/adapters/jira'); 
 const MondayAdapter = require('../src/adapters/monday'); 
-
 const DiscordAdapter = require('./adapters/sync/discord');
 const SlackAdapter = require('./adapters/sync/slack');
-// const TeamsAdapter = require('./adapters/sync/teams'); // Teams usually requires manual webhook URLs
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -23,14 +20,90 @@ const rl = readline.createInterface({
 
 const askQuestion = (query) => new Promise(resolve => rl.question(query, resolve));
 
+// Path to your .env file
+const ENV_PATH = path.join(__dirname, '../.env');
+
+// Helper function to securely update .env and the current running process
+function updateEnvVariable(key, value) {
+    let envContent = '';
+    if (fs.existsSync(ENV_PATH)) {
+        envContent = fs.readFileSync(ENV_PATH, 'utf8');
+    }
+
+    const regex = new RegExp(`^${key}=.*`, 'm');
+    if (regex.test(envContent)) {
+        // Replace existing key
+        envContent = envContent.replace(regex, `${key}=${value}`);
+    } else {
+        // Append new key
+        envContent += `\n${key}=${value}`;
+    }
+
+    fs.writeFileSync(ENV_PATH, envContent.trim() + '\n');
+    process.env[key] = value; // Inject into current runtime memory
+}
+
+async function runAdminWizard() {
+    console.log(`\n========================================`);
+    console.log(`🧙‍♂️ T.R.O.N. Enterprise Setup Wizard`);
+    console.log(`========================================\n`);
+
+    const runSetup = await askQuestion('Do you need to configure or update provider API credentials? (y/n): ');
+    
+    if (runSetup.toLowerCase() === 'y') {
+        // 1. BASECAMP SETUP
+        const setupBasecamp = await askQuestion('Configure Basecamp? (y/n): ');
+        if (setupBasecamp.toLowerCase() === 'y') {
+            const bcAccount = await askQuestion('Enter Basecamp Account ID: ');
+            const bcToken = await askQuestion('Enter Basecamp Access Token: ');
+            updateEnvVariable('BASECAMP_ACCOUNT_ID', bcAccount);
+            updateEnvVariable('BASECAMP_ACCESS_TOKEN', bcToken);
+            console.log(`✅ Basecamp credentials saved.\n`);
+        }
+
+        // 2. JIRA SETUP
+        const setupJira = await askQuestion('Configure Jira? (y/n): ');
+        if (setupJira.toLowerCase() === 'y') {
+            const jiraDomain = await askQuestion('Enter Jira Domain (e.g., your-domain.atlassian.net): ');
+            const jiraEmail = await askQuestion('Enter Jira Email: ');
+            const jiraToken = await askQuestion('Enter Jira API Token: ');
+            updateEnvVariable('JIRA_DOMAIN', jiraDomain);
+            updateEnvVariable('JIRA_EMAIL', jiraEmail);
+            updateEnvVariable('JIRA_API_TOKEN', jiraToken);
+            console.log(`✅ Jira credentials saved.\n`);
+        }
+
+        // 3. MONDAY SETUP
+        const setupMonday = await askQuestion('Configure Monday.com? (y/n): ');
+        if (setupMonday.toLowerCase() === 'y') {
+            const mondayToken = await askQuestion('Enter Monday API Token: ');
+            updateEnvVariable('MONDAY_API_TOKEN', mondayToken);
+            console.log(`✅ Monday.com credentials saved.\n`);
+        }
+
+        // 4. GITHUB SETUP
+        const setupGithub = await askQuestion('Configure GitHub? (y/n): ');
+        if (setupGithub.toLowerCase() === 'y') {
+            const ghToken = await askQuestion('Enter GitHub Personal Access Token: ');
+            const ghWebhookSecret = await askQuestion('Enter a new Webhook Secret (or press enter to auto-generate): ');
+            updateEnvVariable('GITHUB_TOKEN', ghToken);
+            updateEnvVariable('GITHUB_WEBHOOK_SECRET', ghWebhookSecret || `tron_secret_${Date.now()}`);
+            console.log(`✅ GitHub credentials saved.\n`);
+        }
+    }
+
+    console.log(`\n🎉 Credential check complete! Moving to board synchronization...\n`);
+    await runSync();
+}
+
 async function runSync() {
-    console.log("🚀 Welcome to the T.R.O.N. Enterprise Configurator\n");
+    console.log("🚀 Starting the T.R.O.N. Routing Configurator\n");
 
     // ==========================================
     // 1. FETCH GITHUB REPOS
     // ==========================================
     if (!process.env.GITHUB_TOKEN) {
-        console.error("❌ GITHUB_TOKEN is missing from .env");
+        console.error("❌ GITHUB_TOKEN is missing. Please run the setup wizard.");
         process.exit(1);
     }
     const repos = await GithubAdapter.fetchRepos(process.env.GITHUB_TOKEN);
@@ -47,25 +120,22 @@ async function runSync() {
 
     if (process.env.BASECAMP_ACCESS_TOKEN && process.env.BASECAMP_ACCOUNT_ID) {
         console.log("  ✅ Basecamp detected. Fetching projects...");
-        
         const bcProjects = await BasecampAdapter.fetchBoards(
             process.env.BASECAMP_ACCOUNT_ID, 
             process.env.BASECAMP_ACCESS_TOKEN, 
-            "admin@tron.local" // Basecamp requires a User-Agent email
+            "admin@tron.local"
         );
-
-        // Map to a standard format for the menu
         availablePmBoards.push(...bcProjects.map(p => ({ provider: 'basecamp', id: p.id, name: `[Basecamp] ${p.name}` })));
     }
 
     if (process.env.JIRA_API_TOKEN && process.env.JIRA_DOMAIN && process.env.JIRA_EMAIL) {
-        console.log("  ✅ Jira detected. Fetching projects...");
-        console.log("  ⚠️ Jira Projects currently require manual Project Key entry during mapping.");
+        console.log("  ✅ Jira detected.");
+        console.log("  ⚠️ Jira Projects currently require manual Project Key entry in yaml.");
     }
 
     if (process.env.MONDAY_API_TOKEN) {
          console.log("  ✅ Monday.com detected.");
-         console.log("  ⚠️ Monday Boards currently require manual Board ID entry during mapping.");
+         console.log("  ⚠️ Monday Boards currently require manual Board ID entry in yaml.");
     }
 
     // ==========================================
@@ -118,14 +188,14 @@ async function runSync() {
 
         const pmChoice = await askQuestion(`Choose PM option (0-${availablePmBoards.length}): `);
         
-        let selectedColumns = []; // Store fetched columns
+        let selectedColumns = [];
 
         const pmIndex = parseInt(pmChoice) - 1;
         if (pmIndex >= 0 && pmIndex < availablePmBoards.length) {
             const selectedBoard = availablePmBoards[pmIndex];
             projectBlock.pm_tool = { provider: selectedBoard.provider, board_id: selectedBoard.id.toString() };
             
-            // 🌟 DYNAMIC COLUMN MAPPING
+            // DYNAMIC COLUMN MAPPING FOR BASECAMP
             if (selectedBoard.provider === 'basecamp') {
                 console.log(`\nFetching columns for ${selectedBoard.name}...`);
                 selectedColumns = await BasecampAdapter.fetchColumns(
@@ -168,7 +238,6 @@ async function runSync() {
 
         if (commChoice.toUpperCase() === 'Z') {
             const wUrl = await askQuestion("Enter Full Webhook URL: ");
-            // We assume 'teams' here as a placeholder, but the Orchestrator handles raw URLs well
             projectBlock.communication = { provider: 'teams', webhook_url: wUrl };
         } else {
             const commIndex = parseInt(commChoice) - 1;
@@ -197,4 +266,5 @@ async function runSync() {
     rl.close();
 }
 
-runSync();
+// Start the application
+runAdminWizard();
