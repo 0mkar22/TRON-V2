@@ -8,6 +8,11 @@ const PMOrchestrator = require('./adapters/pm-orchestrator');
 const app = express();
 const port = process.env.PORT || 3000;
 
+app.listen(PORT, '0.0.0.0', () => {
+    // I updated the console log so it doesn't hardcode "localhost:3000" anymore
+    console.log(`🌐 T.R.O.N. Cloud Router listening on port ${PORT}`);
+});
+
 // 🛡️ The configuration is stored in globalConfig
 const globalConfig = loadConfig();
 console.log(`📊 Loaded routing rules for ${globalConfig.projects.length} project(s).`);
