@@ -10,7 +10,19 @@ class PMOrchestrator {
         
         try {
             if (provider === 'basecamp') {
-                return await BasecampAdapter.fetchActiveTasks(pmConfig.board_id, mapping.todo_column);
+                // Fetch from BOTH To Do and In Progress columns
+                const todoTasks = mapping.todo_column 
+                    ? await BasecampAdapter.fetchActiveTasks(pmConfig.board_id, mapping.todo_column) 
+                    : [];
+                const inProgressTasks = mapping.branch_created 
+                    ? await BasecampAdapter.fetchActiveTasks(pmConfig.board_id, mapping.branch_created) 
+                    : [];
+                
+                // Add a state label so the VS Code UI knows where they are
+                return [
+                    ...todoTasks.map(t => ({ ...t, state: 'To Do' })),
+                    ...inProgressTasks.map(t => ({ ...t, state: 'In Progress' }))
+                ];
             } else if (provider === 'jira') {
                 return await JiraAdapter.fetchActiveTasks(pmConfig.project_key);
             } else if (provider === 'monday') { 

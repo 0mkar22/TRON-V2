@@ -48,20 +48,27 @@ class BasecampAdapter {
     // ==========================================
     static async resolveTask(projectId, todoColumnId, taskName) {
         try {
-            // STEP 1: Search the To-Do column for an exact match
+            const trimmedTask = taskName.trim();
+
+            // 🛡️ THE FIX: If the VS Code UI passes a raw Basecamp ID, just return it!
+            if (/^\d{8,}$/.test(trimmedTask)) {
+                console.log(`♻️  [BASECAMP] Reusing existing ID [${trimmedTask}].`);
+                return trimmedTask;
+            }
+
+            // Otherwise, it's a "Create New Task" string. Check for duplicates by title.
             const existingTasks = await this.fetchActiveTasks(projectId, todoColumnId);
-            const duplicate = existingTasks.find(t => t.title.trim().toLowerCase() === taskName.trim().toLowerCase());
+            const duplicate = existingTasks.find(t => t.title.trim().toLowerCase() === trimmedTask.toLowerCase());
 
             if (duplicate) {
-                console.log(`♻️  [BASECAMP] Task "${taskName}" already exists. Reusing ID [${duplicate.id}].`);
+                console.log(`♻️  [BASECAMP] Task "${trimmedTask}" already exists. Reusing ID [${duplicate.id}].`);
                 return duplicate.id;
             }
 
-            // STEP 2: Only create if no match was found
-            console.log(`✨ [BASECAMP] Creating new task: "${taskName}"`);
+            console.log(`✨ [BASECAMP] Creating new task: "${trimmedTask}"`);
             const response = await axios.post(
                 `${this.getBaseUrl(projectId)}/card_tables/lists/${todoColumnId}/cards.json`,
-                { title: taskName, content: "Created by T.R.O.N." },
+                { title: trimmedTask, content: "Created by T.R.O.N." },
                 this.getBaseConfig()
             );
 

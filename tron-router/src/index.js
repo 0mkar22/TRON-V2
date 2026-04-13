@@ -21,6 +21,29 @@ app.use(express.json({
 }));
 
 // ==========================================
+// DAEMON API: CREATE TASK
+// ==========================================
+// 🌟 NEW: "Silent" route to just create a ticket without starting a branch
+app.post('/api/create-task', async (req, res) => {
+    const { taskInput, repoName } = req.body;
+    const config = loadConfig().projects.find(p => p.repo === repoName);
+
+    if (!config || !config.pm_tool || config.pm_tool.provider === "none") {
+         return res.status(400).json({ error: "No PM tool configured." });
+    }
+
+    try {
+        // Just call the Orchestrator to create the task. 
+        // We DO NOT push to the Redis webhook_queue here, so no branch/movement happens!
+        const newTaskId = await PMOrchestrator.resolveTask(config.pm_tool, taskInput, config.mapping);
+        res.json({ resolvedId: newTaskId });
+    } catch (error) {
+        console.error("Task creation failed:", error);
+        res.status(500).json({ error: "Task creation failed." });
+    }
+});
+
+// ==========================================
 // DAEMON API: START TASK
 // ==========================================
 app.post('/api/start-task', async (req, res) => {
