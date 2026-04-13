@@ -1,134 +1,61 @@
 const axios = require('axios');
 
-class BasecampAdapter {
-    static async fetchBoards(accountId, accessToken, companyEmail) {
-        const baseUrl = `https://3.basecampapi.com/${accountId}/projects.json`;
-        const headers = {
-            'Authorization': `Bearer ${accessToken}`,
-            'User-Agent': `T.R.O.N. Enterprise Sync (${companyEmail})` 
-        };
-        let validBoards = [];
-
-        console.log(`[BASECAMP SYNC] Fetching all Basecamp projects...`);
-
-        try {
-            const response = await axios.get(baseUrl, { headers });
-            const projects = response.data;
-            
-            for (const project of projects) {
-                const projectId = project.id ? project.id.toString() : "unknown_id";
-                
-                let mapping = {
-                    todo: "NOT_FOUND_TODO_COLUMN",
-                    in_progress: "NOT_FOUND_IN_PROGRESS_COLUMN",
-                    in_review: "NOT_FOUND_REVIEW_COLUMN",
-                    done: "NOT_FOUND_DONE_COLUMN"
-                };
-
-                let allLists = [];
-                const dock = project.dock || [];
-
-                // 🧠 Traverse the Basecamp "Dock"
-                for (const tool of dock) {
-                    try {
-                        if (tool.name === 'card_table' || tool.name === 'kanban_board') {
-                            
-                            // 1. Fetch the exact tool URL Basecamp gave us
-                            const toolRes = await axios.get(tool.url, { headers });
-                            
-                            // 🛡️ THE FINAL FIX: The columns are already here inside 'lists'!
-                            if (toolRes.data.lists && Array.isArray(toolRes.data.lists)) {
-                                allLists = allLists.concat(toolRes.data.lists);
-                            }
-                        }
-                    } catch (err) {
-                        console.log(`⚠️ Could not fetch Kanban lists for project: ${project.name}`);
-                    }
-                }
-
-                // 3. Dynamic Mapping based on Kanban column names
-                if (allLists.length > 0) {
-                    console.log(`\n🔍 Found Kanban columns in Basecamp Project "${project.name}":`);
-                    allLists.forEach(list => console.log(`   - "${list.title || list.name}" (ID: ${list.id})`));
-
-                    allLists.forEach(list => {
-                        const title = (list.title || list.name || "").toLowerCase();
-                        
-                        if (title.includes('todo') || title.includes('to-do') || title.includes('up next') || title.includes('backlog') || title.includes('pending')) {
-                            mapping.todo = list.id.toString();
-                        } else if (title.includes('progress') || title.includes('doing') || title.includes('active') || title.includes('dev') || title.includes('in-progress')) {
-                            mapping.in_progress = list.id.toString();
-                        } else if (title.includes('review') || title.includes('pr') || title.includes('testing') || title.includes('qa')) {
-                            mapping.in_review = list.id.toString();
-                        } else if (title.includes('done') || title.includes('Done') || title.includes('finished') || title.includes('resolved')) {
-                            mapping.done = list.id.toString();
-                        }
-                    });
-
-                    // 🛡️ SMART FALLBACK: Grab by order if keyword failed
-                    if (mapping.todo.includes("NOT_FOUND") && allLists.length > 0) mapping.todo = allLists[0].id.toString();
-                    if (mapping.in_progress.includes("NOT_FOUND") && allLists.length > 1) mapping.in_progress = allLists[1].id.toString();
-                    if (mapping.in_review.includes("NOT_FOUND") && allLists.length > 1) mapping.in_review = allLists[1].id.toString(); 
-                    if (mapping.done.includes("NOT_FOUND") && allLists.length > 2) mapping.done = allLists[allLists.length - 1].id.toString();
-                }
-
-                validBoards.push({
-                    id: projectId,
-                    name: project.name,
-                    url: project.app_url,
-                    tool: 'basecamp',
-                    mapping: mapping
-                });
+class BasecampSyncAdapter {
+    static getBaseConfig(token, email) {
+        return {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'User-Agent': `TRON-Configurator (${email})`
             }
+        };
+    }
 
-            return validBoards;
-
+    static async fetchBoards(accountId, token, email) {
+        try {
+            const url = `https://3.basecampapi.com/${accountId}/projects.json`;
+            const response = await axios.get(url, this.getBaseConfig(token, email));
+            return response.data;
         } catch (error) {
-            console.error(`❌ [BASECAMP SYNC] Error fetching projects: ${error.message}`);
+            console.error("❌ Failed to fetch Basecamp projects:", error.message);
             return [];
         }
     }
-    static async fetchColumns(accountId, accessToken, projectId, email = "admin@tron.local") {
+
+    // 🌟 CORRECTED METHOD: Fetch the Kanban Columns for a specific project
+    static async fetchColumns(accountId, projectId, token, email) {
         try {
-            const api = axios.create({
-                baseURL: `https://3.basecampapi.com/${accountId}`,
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'User-Agent': `T.R.O.N. Sync (${email})`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json' 
-                }
-            });
-
-            // 1. Fetch the project "Dock" to find the dynamic Kanban URL
-            const bucketRes = await api.get(`/buckets/${projectId}.json`);
+            // 1. Fetch the project details to get the "dock" (list of active tools)
+            const projectUrl = `https://3.basecampapi.com/${accountId}/projects/${projectId}.json`;
+            const projectResponse = await axios.get(projectUrl, this.getBaseConfig(token, email));
             
-            const kanbanTool = bucketRes.data.dock.find(tool => tool.name === 'kanban_board');
+            const dock = projectResponse.data.dock || [];
             
-            if (!kanbanTool) {
-                console.warn(`⚠️ No Card Table (kanban_board) active on project ${projectId}.`);
+            // 2. Find the Card Table inside the dock
+            const cardTableTool = dock.find(t => t.name === 'card_table' || t.name === 'kanban_board');
+            
+            if (!cardTableTool) {
+                console.error(`⚠️ No Card Table (Kanban) found in Project ${projectId}. Make sure you have the Card Table tool enabled in Basecamp.`);
                 return [];
             }
 
-            // 2. Fetch the Kanban Board object
-            const tableRes = await api.get(kanbanTool.url);
+            // 3. Fetch the specific Card Table URL to get its lists (columns)
+            const tableResponse = await axios.get(cardTableTool.url, this.getBaseConfig(token, email));
             
-            // 3. Extract the inline lists (columns) directly from the object!
-            if (!tableRes.data.lists || !Array.isArray(tableRes.data.lists)) {
-                console.warn(`⚠️ No columns found inside the Kanban Board.`);
-                return [];
+            // 4. Map the lists to standard { id, name } objects
+            if (tableResponse.data && tableResponse.data.lists) {
+                return tableResponse.data.lists.map(list => ({
+                    id: list.id.toString(),
+                    name: list.title
+                }));
             }
-
-            // Map the ID and TITLE (Basecamp uses "title" for column names)
-            return tableRes.data.lists.map(col => ({
-                id: col.id.toString(),
-                name: col.title 
-            }));
+            return [];
+            
         } catch (error) {
-            console.error(`❌ [BASECAMP SYNC] Failed to fetch columns for project ${projectId}:`, error.message);
+            console.error(`❌ Failed to fetch Basecamp columns:`, error.response?.data || error.message);
             return [];
         }
     }
 }
 
-module.exports = BasecampAdapter;
+module.exports = BasecampSyncAdapter;
