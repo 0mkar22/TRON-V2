@@ -13,3 +13,6 @@ COPY . .
 
 # Expose the port your API runs on
 EXPOSE 3000
+
+# 🌟 THE FIX: Tell Render exactly what to run when the container boots
+CMD ["node", "src/index.js"]
