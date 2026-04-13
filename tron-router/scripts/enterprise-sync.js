@@ -115,65 +115,43 @@ async function runSync() {
         availablePmBoards.forEach((board, index) => {
             console.log(`${index + 1}. ${board.name}`);
         });
-        console.log(`X. Enter Jira Project Key manually`);
-        console.log(`Y. Enter Monday Board ID manually`);
 
-        const pmChoice = await askQuestion(`Choose PM option (0-${availablePmBoards.length}, X, Y): `);
+        const pmChoice = await askQuestion(`Choose PM option (0-${availablePmBoards.length}): `);
         
-        if (pmChoice.toUpperCase() === 'X') {
-            const jKey = await askQuestion("Enter Jira Project Key (e.g., ENG): ");
-            projectBlock.pm_tool = { provider: 'jira', project_key: jKey };
-        } else if (pmChoice.toUpperCase() === 'Y') {
-            const mId = await askQuestion("Enter Monday Board ID (e.g., 12345678): ");
-            projectBlock.pm_tool = { provider: 'monday', board_id: mId };
-        } else {
-            const pmIndex = parseInt(pmChoice) - 1;
-            if (pmIndex >= 0 && pmIndex < availablePmBoards.length) {
-                const selectedBoard = availablePmBoards[pmIndex];
-                projectBlock.pm_tool = { provider: selectedBoard.provider, board_id: selectedBoard.id.toString() };
+        let selectedColumns = []; // Store fetched columns
 
-                // 🧠 THE MAGIC: Auto-fetch and map Basecamp Column IDs!
-                if (selectedBoard.provider === 'basecamp') {
-                    console.log(`  🔄 Fetching columns for Basecamp Project: ${selectedBoard.name}...`);
-                    const columns = await BasecampAdapter.fetchColumns(
-                        process.env.BASECAMP_ACCOUNT_ID, 
-                        process.env.BASECAMP_ACCESS_TOKEN, 
-                        selectedBoard.id
-                    );
+        const pmIndex = parseInt(pmChoice) - 1;
+        if (pmIndex >= 0 && pmIndex < availablePmBoards.length) {
+            const selectedBoard = availablePmBoards[pmIndex];
+            projectBlock.pm_tool = { provider: selectedBoard.provider, board_id: selectedBoard.id.toString() };
+            
+            // 🌟 DYNAMIC COLUMN MAPPING
+            if (selectedBoard.provider === 'basecamp') {
+                console.log(`\nFetching columns for ${selectedBoard.name}...`);
+                selectedColumns = await BasecampAdapter.fetchColumns(
+                    process.env.BASECAMP_ACCOUNT_ID,
+                    selectedBoard.id,
+                    process.env.BASECAMP_ACCESS_TOKEN,
+                    "admin@tron.local"
+                );
 
-                    if (columns.length > 0) {
-                        const usedIds = new Set(); // 🛡️ THE UNIQUENESS ENFORCER
+                if (selectedColumns.length > 0) {
+                    console.log(`\n📋 Found Columns:`);
+                    selectedColumns.forEach((col, idx) => console.log(`${idx + 1}. ${col.name} (ID: ${col.id})`));
+                    
+                    const todoIdx = await askQuestion(`\nWhich column is for "To Do" (Enter number): `);
+                    projectBlock.mapping.todo_column = selectedColumns[parseInt(todoIdx) - 1].id;
 
-                        const getColId = (keywords) => {
-                            // 1. Look for a keyword match that HAS NOT been used yet
-                            let found = columns.find(c => {
-                                if (usedIds.has(c.id)) return false;
-                                
-                                const colName = c.name.toLowerCase();
-                                // Basic prevention of "complete" matching "incomplete"
-                                return keywords.some(k => colName.includes(k) && !colName.includes('in' + k));
-                            });
+                    const branchIdx = await askQuestion(`Which column is for "In Progress" (Branch Created): `);
+                    projectBlock.mapping.branch_created = selectedColumns[parseInt(branchIdx) - 1].id;
 
-                            // 2. Fallback: If no keyword matches, grab the first UNUSED column
-                            if (!found) {
-                                found = columns.find(c => !usedIds.has(c.id)) || columns[0];
-                            }
+                    const prOpenIdx = await askQuestion(`Which column is for "Under Review" (PR Opened): `);
+                    projectBlock.mapping.pull_request_opened = selectedColumns[parseInt(prOpenIdx) - 1].id;
 
-                            // 3. Lock the ID so it can't be used again
-                            usedIds.add(found.id);
-                            return found.id;
-                        };
-
-                        projectBlock.mapping = {
-                            todo_column: getColId(['todo', 'to do', 'to-do', 'backlog']),
-                            branch_created: getColId(['in progress', 'doing', 'active']),
-                            pull_request_opened: getColId(['in review','under review', 'pr', 'testing']),
-                            pull_request_closed: getColId(['done', 'complete', 'merged', 'finish'])
-                        };
-                        console.log(`  ✅ Automatically mapped UNIQUE Column IDs for Basecamp!`);
-                    } else {
-                        console.log(`  ⚠️ No columns found on this board. Defaulting to placeholders.`);
-                    }
+                    const prCloseIdx = await askQuestion(`Which column is for "Done" (PR Closed): `);
+                    projectBlock.mapping.pull_request_closed = selectedColumns[parseInt(prCloseIdx) - 1].id;
+                } else {
+                    console.log(`⚠️ Could not fetch columns. You will need to map IDs manually in tron.yaml.`);
                 }
             }
         }
