@@ -78,25 +78,35 @@ app.post('/api/start-task', async (req, res) => {
             // 1. Verify or Create the task
             resolvedTaskID = await PMOrchestrator.resolveTask(config.pm_tool, taskInput, config.mapping);
             
-            // 🌟 THE ULTIMATE FIX: Explicitly move the ticket to In Progress right now!
-            if (config.pm_tool.provider === 'basecamp' && config.mapping.in_progress) {
-                const BasecampAdapter = require('./adapters/basecamp');
-                console.log(`🚚 [API] Moving task [${resolvedTaskID}] to In Progress column...`);
-                await BasecampAdapter.updateTicketStatus(
-                    resolvedTaskID, 
-                    config.mapping.in_progress, 
-                    config.pm_tool.project_id
-                );
+            // 🌟 THE BULLETPROOF FIX: Ignore case-sensitivity and check multiple YAML keys
+            const providerName = (config.pm_tool.provider || '').toLowerCase();
+            const inProgressId = config.mapping.in_progress || config.mapping.inProgress;
+
+            console.log(`🔍 [DEBUG] Provider detected: '${providerName}' | In Progress ID: '${inProgressId}'`);
+
+            if (providerName === 'basecamp') {
+                if (inProgressId) {
+                    const BasecampAdapter = require('./adapters/basecamp');
+                    console.log(`🚚 [API] Moving task [${resolvedTaskID}] to In Progress column [${inProgressId}]...`);
+                    
+                    await BasecampAdapter.updateTicketStatus(
+                        resolvedTaskID, 
+                        inProgressId, 
+                        config.pm_tool.project_id
+                    );
+                } else {
+                    console.log(`❌ [API] Skipped Move: Could not find 'in_progress' inside your tron.yaml mapping!`);
+                }
             }
         }
 
-        // 2. Fire the Background Worker Event (Kept intact so AI reviews/webhooks still function)
+        // 2. Fire the Background Worker Event
         await redis.lpush('tron:webhook_queue', JSON.stringify({
             eventType: 'local_start',
             payload: { taskId: resolvedTaskID, repository: { full_name: repoName } }
         }));
 
-        // 3. Respond back to VS Code so it knows it can safely refresh the sidebar!
+        // 3. Respond back to VS Code
         res.json({ resolvedId: resolvedTaskID });
 
     } catch (error) {
