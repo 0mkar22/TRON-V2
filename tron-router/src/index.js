@@ -80,7 +80,8 @@ app.post('/api/start-task', async (req, res) => {
             
             // 🌟 THE BULLETPROOF FIX: Ignore case-sensitivity and check multiple YAML keys
             const providerName = (config.pm_tool.provider || '').toLowerCase();
-            const inProgressId = config.mapping.in_progress || config.mapping.inProgress;
+            // 🌟 Tell the backend to look for 'branch_created' in your YAML!
+            const inProgressId = config.mapping.branch_created || config.mapping.in_progress;
 
             console.log(`🔍 [DEBUG] Provider detected: '${providerName}' | In Progress ID: '${inProgressId}'`);
 
