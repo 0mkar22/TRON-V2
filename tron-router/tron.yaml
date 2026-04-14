@@ -10,4 +10,4 @@ projects:
       pull_request_closed: '9641640742'
     communication:
       provider: discord
-      webhook_url: '1488839523784855684'
+      webhook_url: '1488839523784855684'  
