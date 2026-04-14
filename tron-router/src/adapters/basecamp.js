@@ -17,7 +17,7 @@ class BasecampAdapter {
     }
 
     // ==========================================
-    // 1. Fetch Active Tasks (The 404 Fix)
+    // 1. Fetch Active Tasks
     // ==========================================
     static async fetchActiveTasks(projectId, columnId) {
         if (!columnId || columnId === 'undefined') {
@@ -36,7 +36,7 @@ class BasecampAdapter {
             return response.data.map(card => ({
                 id: card.id.toString(),
                 title: card.title,
-                description: card.content || "No description provided." // 🌟 NEW: Fetch the description
+                description: card.content || "No description provided." 
             }));
         } catch (error) {
             console.error(`❌ [BASECAMP] Fetch Tasks Error:`, error.response?.data || error.message);
@@ -50,11 +50,14 @@ class BasecampAdapter {
     static async resolveTask(projectId, todoColumnId, taskName) {
         try {
             const trimmedTask = taskName.trim();
+            
+            // 🌟 FIXED: Strip out any "TASK-" prefix to check if they passed a known ID
+            const possibleId = trimmedTask.replace(/\D/g, ''); 
 
-            // 🛡️ THE FIX: If the VS Code UI passes a raw Basecamp ID, just return it!
-            if (/^\d{8,}$/.test(trimmedTask)) {
-                console.log(`♻️  [BASECAMP] Reusing existing ID [${trimmedTask}].`);
-                return trimmedTask;
+            // If it is purely an 8+ digit number, it's an existing Basecamp ID. Reuse it!
+            if (possibleId.length >= 8) {
+                console.log(`♻️  [BASECAMP] Reusing existing ID [${possibleId}].`);
+                return possibleId;
             }
 
             // Otherwise, it's a "Create New Task" string. Check for duplicates by title.
@@ -81,19 +84,24 @@ class BasecampAdapter {
     }
 
     // ==========================================
-    // 3. Move Ticket
+    // 3. Move Ticket (The 404 & False Positive Fix)
     // ==========================================
     static async updateTicketStatus(ticketId, newColumnId, projectId) {
         try {
+            // 🌟 FIXED: Force the ID to be purely numeric so Basecamp doesn't throw a 404
+            const cleanTicketId = ticketId.toString().replace(/\D/g, '');
+
             // Basecamp Card Tables use a specific 'moves' endpoint
             await axios.post(
-                `${this.getBaseUrl(projectId)}/card_tables/cards/${ticketId}/moves.json`,
+                `${this.getBaseUrl(projectId)}/card_tables/cards/${cleanTicketId}/moves.json`,
                 { column_id: newColumnId }, 
                 this.getBaseConfig()
             );
-            console.log(`✅ [BASECAMP] Moved ticket [${ticketId}] to column [${newColumnId}]`);
+            console.log(`✅ [BASECAMP] Moved ticket [${cleanTicketId}] to column [${newColumnId}]`);
         } catch (error) {
             console.error(`❌ [BASECAMP] Move Task Error:`, error.response?.data || error.message);
+            // 🌟 FIXED: Throw the error so your backend returns a 500 status to VS Code!
+            throw error; 
         }
     }
 }
