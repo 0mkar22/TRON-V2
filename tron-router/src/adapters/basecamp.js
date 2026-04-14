@@ -35,7 +35,8 @@ class BasecampAdapter {
             // Honor the Orchestrator's strict GET contract
             return response.data.map(card => ({
                 id: card.id.toString(),
-                title: card.title
+                title: card.title,
+                description: card.content || "No description provided." // 🌟 NEW: Fetch the description
             }));
         } catch (error) {
             console.error(`❌ [BASECAMP] Fetch Tasks Error:`, error.response?.data || error.message);
