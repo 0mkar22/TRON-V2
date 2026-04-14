@@ -66,7 +66,12 @@ async function startWorker() {
                 }
 
                 // --- PHASE 1: PM STATE TRACKING ---
-                const pmTool = projectConfig.pm_tool;
+                // 🌟 FIX: Force project_id into the pmTool object so the Orchestrator doesn't crash!
+                const pmTool = {
+                    ...projectConfig.pm_tool,
+                    project_id: projectConfig.pm_tool.board_id || projectConfig.pm_tool.project_id
+                };
+
                 const mappingKey = `pull_request_${action}`; 
                 const newStatus = projectConfig.mapping[mappingKey];
 
@@ -137,7 +142,13 @@ async function startWorker() {
             // ==========================================
             } else if (job.eventType === 'local_start') {
                 const taskID = job.payload.taskId;
-                const pmTool = projectConfig.pm_tool;
+                
+                // 🌟 FIX: Force project_id mapping
+                const pmTool = {
+                    ...projectConfig.pm_tool,
+                    project_id: projectConfig.pm_tool.board_id || projectConfig.pm_tool.project_id
+                };
+                
                 const newStatus = projectConfig.mapping['branch_created']; 
 
                 if (!newStatus) {
@@ -194,7 +205,11 @@ async function startWorker() {
                         const taskIdentifier = taskIdMatch[1];
                         console.log(`🎯 Extracted Task ID [${taskIdentifier}] from branch name.`);
 
-                        const pmTool = projectConfig.pm_tool;
+                        // 🌟 FIX: Force project_id mapping
+                        const pmTool = {
+                            ...projectConfig.pm_tool,
+                            project_id: projectConfig.pm_tool.board_id || projectConfig.pm_tool.project_id
+                        };
                         const newStatus = projectConfig.mapping['branch_created']; 
 
                         if (!newStatus) {
