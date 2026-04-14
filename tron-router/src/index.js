@@ -1,12 +1,18 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const Redis = require('ioredis');
 const verifyGitHub = require('./middleware/verifyGitHub'); 
 const loadConfig = require('./config/yamlLoader');
 const PMOrchestrator = require('./adapters/pm-orchestrator');
+const path = require('path');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
+// 🌟 NEW: Add these two lines to allow the React dashboard to connect
+app.use(cors());
 const port = process.env.PORT || 3000;
+
 
 
 
@@ -21,6 +27,19 @@ redis.on('error', (err) => console.error('Redis Connection Error:', err));
 app.use(express.json({
     verify: (req, res, buf) => { req.rawBody = buf; }
 }));
+
+
+// 🌟 NEW: Mount the Admin API
+app.use('/api/admin', adminRoutes);
+
+// 🌟 NEW: Serve the compiled React Dashboard 
+// (We will build this into a 'dist' folder in the next step)
+app.use('/dashboard', express.static(path.join(__dirname, '../dashboard/dist')));
+
+// Optional: Redirect /dashboard to the React index.html so client-side routing works
+app.get(/^\/dashboard/, (req, res) => {
+    res.sendFile(path.join(__dirname, '../dashboard/dist/index.html'));
+});
 
 // ==========================================
 // DAEMON API: CREATE TASK
