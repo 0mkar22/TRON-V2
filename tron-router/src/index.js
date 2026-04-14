@@ -74,22 +74,34 @@ app.post('/api/start-task', async (req, res) => {
     let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Default fallback
 
     try {
-        // 1. Hand off to Orchestrator (Index.js doesn't know HOW it resolves the task)
         if (config && config.pm_tool && config.pm_tool.provider !== "none") {
+            // 1. Verify or Create the task
             resolvedTaskID = await PMOrchestrator.resolveTask(config.pm_tool, taskInput, config.mapping);
+            
+            // 🌟 THE ULTIMATE FIX: Explicitly move the ticket to In Progress right now!
+            if (config.pm_tool.provider === 'basecamp' && config.mapping.in_progress) {
+                const BasecampAdapter = require('./adapters/basecamp');
+                console.log(`🚚 [API] Moving task [${resolvedTaskID}] to In Progress column...`);
+                await BasecampAdapter.updateTicketStatus(
+                    resolvedTaskID, 
+                    config.mapping.in_progress, 
+                    config.pm_tool.project_id
+                );
+            }
         }
 
-        // 2. Fire the Background Worker Event
+        // 2. Fire the Background Worker Event (Kept intact so AI reviews/webhooks still function)
         await redis.lpush('tron:webhook_queue', JSON.stringify({
             eventType: 'local_start',
             payload: { taskId: resolvedTaskID, repository: { full_name: repoName } }
         }));
 
-        // 3. Honor the Go Daemon's exact expected JSON contract
+        // 3. Respond back to VS Code so it knows it can safely refresh the sidebar!
         res.json({ resolvedId: resolvedTaskID });
 
     } catch (error) {
-        res.status(500).json({ error: "Task resolution failed." });
+        console.error("❌ API Start Task Error:", error);
+        res.status(500).json({ error: "Task resolution and movement failed." });
     }
 });
 
