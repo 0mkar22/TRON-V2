@@ -90,10 +90,13 @@ app.post('/api/start-task', async (req, res) => {
                     const BasecampAdapter = require('./adapters/basecamp');
                     console.log(`🚚 [API] Moving task [${resolvedTaskID}] to In Progress column [${inProgressId}]...`);
                     
+                    // 🌟 Accept either board_id OR project_id!
+                    const projectId = config.pm_tool.board_id || config.pm_tool.project_id;
+
                     await BasecampAdapter.updateTicketStatus(
                         resolvedTaskID, 
                         inProgressId, 
-                        config.pm_tool.project_id
+                        projectId
                     );
                 } else {
                     console.log(`❌ [API] Skipped Move: Could not find 'in_progress' inside your tron.yaml mapping!`);
