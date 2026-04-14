@@ -120,6 +120,26 @@ app.post('/api/start-task', async (req, res) => {
 });
 
 // ==========================================
+// ✨ NEW: AI TASK SUGGESTIONS API
+// ==========================================
+app.post('/api/suggest-tasks', async (req, res) => {
+    const { codeDiff } = req.body;
+    
+    if (!codeDiff || codeDiff.trim().length === 0) {
+        return res.json({ suggestions: [] });
+    }
+
+    try {
+        const aiAdapter = require('./adapters/ai');
+        const suggestions = await aiAdapter.generateTaskSuggestions(codeDiff);
+        res.json({ suggestions });
+    } catch (error) {
+        console.error("❌ API Suggest Tasks Error:", error);
+        res.status(500).json({ error: "Failed to generate suggestions." });
+    }
+});
+
+// ==========================================
 // GITHUB WEBHOOK ENDPOINT
 // ==========================================
 app.post('/webhook', /* verifyGitHub, */ async (req, res) => {

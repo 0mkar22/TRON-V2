@@ -114,6 +114,51 @@ async function generateCodeReview(sanitizedDiff) {
 }
 
 // ==========================================
+// ✨ NEW: THE TASK SUGGESTION ENGINE
+// ==========================================
+async function generateTaskSuggestions(diffData) {
+    if (!diffData || diffData.trim().length === 0) return [];
+
+    console.log(`🤖 [AI ADAPTER] Brainstorming tasks for uncommitted code...`);
+
+    const prompt = `
+    You are a Senior Technical Product Manager. A developer is currently writing some code, but they haven't created a ticket for it yet.
+    Look at the following raw, uncommitted code diff and suggest 3 short, actionable task titles (under 8 words each) that accurately describe what the developer is building.
+    
+    RULES:
+    1. Start each task with a strong action verb (e.g., Implement, Fix, Add, Refactor).
+    2. Keep them short and professional (like Basecamp or Jira ticket titles).
+    3. You MUST respond in pure JSON format as an array of exactly 3 strings. Do not add markdown or extra text.
+    
+    EXAMPLE OUTPUT:
+    ["Implement user authentication middleware", "Fix database connection retry logic", "Add error boundaries to React router"]
+
+    Code Diff:
+    ${diffData}
+    `;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "openrouter/free", 
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.4 // Just enough creativity to guess the intent
+        });
+
+        let rawContent = response.choices[0].message.content.trim();
+        const jsonMatch = rawContent.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error("AI did not return a valid JSON array.");
+
+        const suggestions = JSON.parse(jsonMatch[0]);
+        return suggestions.slice(0, 3); // Guarantee we only return 3
+
+    } catch (error) {
+        console.error(`❌ [AI ADAPTER] Task Suggestion Failed:`, error.message);
+        // Fallback so the VS Code UI doesn't crash
+        return ["Implement new feature", "Refactor codebase", "Fix code issue"]; 
+    }
+}
+
+// ==========================================
 // 🛡️ THE WRAPPER FUNCTION FOR TEST SCRIPT & DISCORD
 // ==========================================
 async function generateSummary(diffData) {
@@ -131,5 +176,6 @@ async function generateSummary(diffData) {
 module.exports = { 
     generateExecutiveSummary, 
     generateCodeReview,
-    generateSummary 
+    generateSummary,
+    generateTaskSuggestions
 };
