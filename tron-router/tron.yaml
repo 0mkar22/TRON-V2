@@ -10,4 +10,9 @@ projects:
       pull_request_closed: '9641640742'
     communication:
       provider: discord
-      webhook_url: '1488839523784855684'  
+      bot_token: MTQ4ODgzMjMwNzExNTcyMDgxNQ.GS4wke.g9siGWOnGNAgunKQ80BdGJWb72nHW_XyZ4FPYE
+      channel_id: '1488839523784855684'
+      webhook_url: ''
+team:
+  - github: 0mkar22
+    basecamp_id: '51914071'

@@ -14,6 +14,8 @@ services:
     command: node src/index.js
     ports:
       - "3000:3000"
+    volumes:
+      - .:/app
     environment:
       - REDIS_URL=redis://redis:6379
     env_file:

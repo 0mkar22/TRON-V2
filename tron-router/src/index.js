@@ -6,18 +6,31 @@ const verifyGitHub = require('./middleware/verifyGitHub');
 const loadConfig = require('./config/yamlLoader');
 const PMOrchestrator = require('./adapters/pm-orchestrator');
 const path = require('path');
+const fs = require('fs');       
+const yaml = require('js-yaml'); 
 const adminRoutes = require('./routes/admin');
+const webhookRoutes = require('./routes/webhook');
 
 const app = express();
+app.use(express.json());
 // 🌟 NEW: Add these two lines to allow the React dashboard to connect
 app.use(cors());
+app.use('/api/webhooks', webhookRoutes);
 const port = process.env.PORT || 3000;
 
 
+// Load the YAML file
+const configPath = path.join(process.cwd(), 'tron.yaml');
+const fileContents = fs.readFileSync(configPath, 'utf8');
+let globalConfig = yaml.load(fileContents);
 
+// 🌟 THE FIX: Provide a safe fallback if the file is empty
+if (!globalConfig) {
+    globalConfig = { projects: [] };
+} else if (!globalConfig.projects) {
+    globalConfig.projects = [];
+}
 
-// 🛡️ The configuration is stored in globalConfig
-const globalConfig = loadConfig();
 console.log(`📊 Loaded routing rules for ${globalConfig.projects.length} project(s).`);
 
 const redis = new Redis(process.env.REDIS_URL);
