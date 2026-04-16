@@ -106,8 +106,10 @@ router.post('/github', async (req, res) => {
                 // ==========================================
                 const moveUrl = `https://3.basecampapi.com/${BASECAMP_ACCOUNT_ID}/buckets/${projectId}/card_tables/cards/${taskId}/moves.json`;
                 
+                // 🔥 The Boss Feature: position 1 bumps it to the top!
                 await axios.post(moveUrl, {
-                    column_id: inProgressColumnId
+                    column_id: inProgressColumnId,
+                    position: 1 
                 }, { headers });
 
                 console.log(`✅ [TRON ENGINE] BOOM! Card ${taskId} successfully moved to the 'In Progress' column!`);
