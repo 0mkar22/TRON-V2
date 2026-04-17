@@ -80,9 +80,16 @@ app.post('/api/create-task', async (req, res) => {
 // ==========================================
 // DAEMON API: START TASK
 // ==========================================
+const axios = require('axios'); // Ensure axios is available for the assignment call
+
 app.post('/api/start-task', async (req, res) => {
-    const { taskInput, repoName } = req.body;
-    const config = loadConfig().projects.find(p => p.repo === repoName);
+    // 🌟 1. Catch the developer username sent from VS Code!
+    const { taskInput, repoName, developer } = req.body;
+    
+    // 🌟 2. Load the FULL config first so we don't lose the team roster!
+    const fullConfig = loadConfig();
+    const config = fullConfig.projects.find(p => p.repo === repoName);
+    const teamRoster = fullConfig.team || [];
 
     let resolvedTaskID = taskInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Default fallback
 
@@ -91,21 +98,53 @@ app.post('/api/start-task', async (req, res) => {
             // 1. Verify or Create the task
             resolvedTaskID = await PMOrchestrator.resolveTask(config.pm_tool, taskInput, config.mapping);
             
-            // 🌟 THE BULLETPROOF FIX: Ignore case-sensitivity and check multiple YAML keys
             const providerName = (config.pm_tool.provider || '').toLowerCase();
-            // 🌟 Tell the backend to look for 'branch_created' in your YAML!
             const inProgressId = config.mapping.branch_created || config.mapping.in_progress;
+            const projectId = config.pm_tool.board_id || config.pm_tool.project_id;
 
             console.log(`🔍 [DEBUG] Provider detected: '${providerName}' | In Progress ID: '${inProgressId}'`);
 
             if (providerName === 'basecamp') {
+                
+                // ==========================================
+                // 🌟 INSTANT IDENTITY ASSIGNMENT 
+                // ==========================================
+                if (developer) {
+                    // Match the incoming Git name with the YAML roster
+                    const teamMember = teamRoster.find(t => t.github.toLowerCase() === developer.toLowerCase());
+                    
+                    if (teamMember && teamMember.basecamp_id) {
+                        console.log(`👤 [TRON] Identity Match! GitHub '${developer}' is Basecamp ID '${teamMember.basecamp_id}'`);
+                        
+                        try {
+                            const updateUrl = `https://3.basecampapi.com/${process.env.BASECAMP_ACCOUNT_ID}/buckets/${projectId}/card_tables/cards/${resolvedTaskID}.json`;
+                            
+                            // Send the PUT request to Basecamp to assign the avatar
+                            await axios.put(updateUrl, {
+                                assignee_ids: [teamMember.basecamp_id]
+                            }, {
+                                headers: {
+                                    'Authorization': `Bearer ${process.env.BASECAMP_ACCESS_TOKEN}`,
+                                    'Content-Type': 'application/json'
+                                }
+                            });
+                            console.log(`✅ [TRON] Instantly assigned task ${resolvedTaskID} to ${developer}!`);
+                            
+                        } catch (assignErr) {
+                            console.error(`❌ [TRON] Failed to assign in Basecamp:`, assignErr.message);
+                        }
+                    } else {
+                        console.log(`⚠️ [TRON] User '${developer}' not found in tron.yaml team roster. Skipping assignment.`);
+                    }
+                }
+
+                // ==========================================
+                // 🚚 MOVE THE TICKET VIA ADAPTER
+                // ==========================================
                 if (inProgressId) {
                     const BasecampAdapter = require('./adapters/basecamp');
                     console.log(`🚚 [API] Moving task [${resolvedTaskID}] to In Progress column [${inProgressId}]...`);
                     
-                    // 🌟 Accept either board_id OR project_id!
-                    const projectId = config.pm_tool.board_id || config.pm_tool.project_id;
-
                     await BasecampAdapter.updateTicketStatus(
                         resolvedTaskID, 
                         inProgressId, 
