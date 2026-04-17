@@ -14,7 +14,7 @@ const GithubSetup = () => {
         setStatusMessage(null);
 
         try {
-            const response = await axios.post('http://localhost:3000/api/admin/github/repos', {
+            const response = await axios.post('https://tron-v2-3.onrender.com/api/admin/github/repos', {
                 githubToken: token
             });
             setRepos(response.data.repos);
@@ -38,7 +38,7 @@ const GithubSetup = () => {
         setStatusMessage({ type: 'info', text: 'Installing webhooks... please wait.' });
 
         try {
-            const response = await axios.post('http://localhost:3000/api/admin/save-config', {
+            const response = await axios.post('https://tron-v2-3.onrender.com/api/admin/save-config', {
                 github_token: token,
                 active_repos: selectedRepos
                 // We will add pm_tool and communication here later!

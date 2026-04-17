@@ -201,7 +201,7 @@ export default function App() {
 
     if (!boardColumns[boardId] && credentials.BASECAMP_ACCESS_TOKEN) {
       try {
-        const res = await axios.post('http://localhost:3000/api/admin/columns', {
+        const res = await axios.post('https://tron-v2-3.onrender.com/api/admin/columns', {
           accountId: credentials.BASECAMP_ACCOUNT_ID,
           accessToken: credentials.BASECAMP_ACCESS_TOKEN,
           projectId: boardId
@@ -246,7 +246,7 @@ export default function App() {
     handleConfigChange(repoId, 'match_error', '');
 
     try {
-      const res = await axios.post('http://localhost:3000/api/admin/discord/match', {
+      const res = await axios.post('https://tron-v2-3.onrender.com/api/admin/discord/match', {
         botToken: token,
         repoName: repoId
       });
@@ -293,7 +293,7 @@ export default function App() {
 
     try {
       // 🌟 Send BOTH projects and the team to the backend
-      await axios.post('http://localhost:3000/api/admin/config', { 
+      await axios.post('https://tron-v2-3.onrender.com/api/admin/config', { 
         projects: finalProjects, 
         team: finalTeam 
       });
@@ -306,19 +306,19 @@ export default function App() {
   const handleSaveCredentials = async (e) => {
     e.preventDefault();
     try {
-      const repoRes = await axios.post('http://localhost:3000/api/admin/github/repos', {
+      const repoRes = await axios.post('https://tron-v2-3.onrender.com/api/admin/github/repos', {
           githubToken: credentials.GITHUB_TOKEN
       });
       const fetchedRepos = repoRes.data.repos.map(r => ({ full_name: r.fullName }));
       setRepos(fetchedRepos);
 
-      const boardRes = await axios.post('http://localhost:3000/api/admin/boards', {
-          provider: 'basecamp',
+        const boardRes = await axios.post('https://tron-v2-3.onrender.com/api/admin/boards', {
+            provider: 'basecamp',
           accountId: credentials.BASECAMP_ACCOUNT_ID,
           accessToken: credentials.BASECAMP_ACCESS_TOKEN
       });
 
-      const peopleRes = await axios.post('http://localhost:3000/api/admin/basecamp/people', {
+      const peopleRes = await axios.post('https://tron-v2-3.onrender.com/api/admin/basecamp/people', {
           accountId: credentials.BASECAMP_ACCOUNT_ID,
           accessToken: credentials.BASECAMP_ACCESS_TOKEN
       });
