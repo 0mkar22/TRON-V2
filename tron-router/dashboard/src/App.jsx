@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
+import './App.css';
+
+const API_BASE_URL = 'https://tron-v2-3.onrender.com';
 
 // --- UI COMPONENTS ---
 
@@ -17,14 +20,30 @@ function DraggableRepo({ repo }) {
   } : undefined;
 
   return (
-    <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="repo-card">
-      📦 {repo.full_name}
+    <div 
+      ref={setNodeRef} 
+      style={{
+        ...style,
+        background: '#ffffff',
+        border: '1px solid var(--border-color)',
+        padding: '12px 16px',
+        borderRadius: 'var(--radius-md)',
+        cursor: 'grab',
+        boxShadow: 'var(--shadow-sm)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        fontWeight: '500'
+      }} 
+      {...listeners} 
+      {...attributes}
+    >
+      <span style={{ color: 'var(--primary)' }}>📦</span> {repo.full_name}
     </div>
   );
 }
 
 // 2. Droppable Board Zone
-// 🌟 NOTICE: onAutoMatchDiscord is safely passed in here!
 function DroppableBoard({ board, mappedRepos, columns, repoConfigs, onConfigChange, onAutoMatchDiscord }) {
   const { isOver, setNodeRef } = useDroppable({
     id: board.id.toString(),
@@ -32,69 +51,73 @@ function DroppableBoard({ board, mappedRepos, columns, repoConfigs, onConfigChan
   });
 
   const style = {
-    backgroundColor: isOver ? '#e0f7fa' : '#f8f9fa',
-    border: isOver ? '2px dashed #00acc1' : '2px solid #dee2e6',
-    padding: '15px',
-    borderRadius: '8px',
-    minHeight: '200px'
+    backgroundColor: isOver ? '#f0f9ff' : '#fafafa',
+    border: isOver ? '2px dashed var(--primary)' : '1px solid var(--border-color)',
+    padding: '20px',
+    borderRadius: 'var(--radius-md)',
+    minHeight: '200px',
+    transition: 'all 0.2s ease'
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="board-zone">
-      <h3>📋 {board.name}</h3>
-      <div className="mapped-repos">
-        {mappedRepos.length === 0 ? <p className="empty-text">Drop repos here...</p> : null}
+    <div ref={setNodeRef} style={style}>
+      <h3 style={{ margin: '0 0 16px 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ color: 'var(--primary)' }}>📋</span> {board.name}
+      </h3>
+      
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {mappedRepos.length === 0 ? <div className="empty-state">Drop repositories here...</div> : null}
         
         {mappedRepos.map(repoId => {
           const config = repoConfigs[repoId] || {};
           
           return (
-            <div key={repoId} style={{ background: 'white', padding: '15px', borderRadius: '6px', marginTop: '10px', border: '1px solid #ccc' }}>
-              <h4 style={{ margin: '0 0 10px 0' }}>🔗 {repoId}</h4>
+            <div key={repoId} style={{ background: 'white', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)' }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: 'var(--text-main)' }}>🔗 {repoId}</h4>
               
               {columns && columns.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.875rem' }}>
                   
                   {/* --- BASECAMP COLUMNS --- */}
-                  <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>To Do:</strong>
-                    <select value={config.todo_column || ''} onChange={(e) => onConfigChange(repoId, 'todo_column', e.target.value)}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <strong style={{ width: '100px', color: 'var(--text-muted)' }}>To Do:</strong>
+                    <select className="input-control" value={config.todo_column || ''} onChange={(e) => onConfigChange(repoId, 'todo_column', e.target.value)}>
                       <option value="">Select column...</option>
                       {columns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </label>
 
-                  <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>In Progress:</strong>
-                    <select value={config.branch_created || ''} onChange={(e) => onConfigChange(repoId, 'branch_created', e.target.value)}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <strong style={{ width: '100px', color: 'var(--text-muted)' }}>In Progress:</strong>
+                    <select className="input-control" value={config.branch_created || ''} onChange={(e) => onConfigChange(repoId, 'branch_created', e.target.value)}>
                       <option value="">Select column...</option>
                       {columns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </label>
 
-                  <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>Under Review:</strong>
-                    <select value={config.pull_request_opened || ''} onChange={(e) => onConfigChange(repoId, 'pull_request_opened', e.target.value)}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <strong style={{ width: '100px', color: 'var(--text-muted)' }}>Under Review:</strong>
+                    <select className="input-control" value={config.pull_request_opened || ''} onChange={(e) => onConfigChange(repoId, 'pull_request_opened', e.target.value)}>
                       <option value="">Select column...</option>
                       {columns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </label>
 
-                  <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>Done:</strong>
-                    <select value={config.pull_request_closed || ''} onChange={(e) => onConfigChange(repoId, 'pull_request_closed', e.target.value)}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <strong style={{ width: '100px', color: 'var(--text-muted)' }}>Done:</strong>
+                    <select className="input-control" value={config.pull_request_closed || ''} onChange={(e) => onConfigChange(repoId, 'pull_request_closed', e.target.value)}>
                       <option value="">Select column...</option>
                       {columns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </label>
 
                   {/* --- BROADCAST SETUP --- */}
-                  <hr style={{ margin: '15px 0', border: 'none', borderTop: '1px solid #eee' }} />
-                  <h5 style={{ margin: '0 0 10px 0', color: '#555' }}>📢 Broadcast Setup</h5>
+                  <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid var(--border-color)' }} />
+                  <h5 style={{ margin: '0 0 12px 0', color: 'var(--text-main)', fontSize: '0.9rem' }}>📢 Broadcast Setup</h5>
                   
-                  <label style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <strong>Platform:</strong>
-                    <select value={config.comm_provider || 'none'} onChange={(e) => onConfigChange(repoId, 'comm_provider', e.target.value)}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                    <strong style={{ width: '100px', color: 'var(--text-muted)' }}>Platform:</strong>
+                    <select className="input-control" value={config.comm_provider || 'none'} onChange={(e) => onConfigChange(repoId, 'comm_provider', e.target.value)}>
                       <option value="none">None</option>
                       <option value="discord">Discord</option>
                       <option value="slack">Slack</option>
@@ -102,35 +125,33 @@ function DroppableBoard({ board, mappedRepos, columns, repoConfigs, onConfigChan
                   </label>
 
                   {config.comm_provider === 'discord' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: '#f8f9fa', padding: '10px', borderRadius: '6px', border: '1px dashed #ccc' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--bg-body)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-color)' }}>
                       
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                        <strong>Discord Bot Token:</strong>
-                        <div style={{ display: 'flex', gap: '5px' }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <strong style={{ color: 'var(--text-muted)' }}>Discord Bot Token:</strong>
+                        <div style={{ display: 'flex', gap: '8px' }}>
                           <input 
                             type="password" 
                             placeholder="Paste Bot Token here..."
+                            className="input-control"
                             value={config.comm_bot_token || ''}
                             onChange={(e) => onConfigChange(repoId, 'comm_bot_token', e.target.value)}
-                            style={{ flex: 1, padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '12px' }}
                           />
-                          <button onClick={() => onAutoMatchDiscord(repoId)} type="button" disabled={config.match_status === 'loading'} style={{ padding: '6px 10px', background: '#5865F2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                          <button onClick={() => onAutoMatchDiscord(repoId)} type="button" disabled={config.match_status === 'loading'} className="btn btn-primary" style={{ backgroundColor: '#5865F2' }}>
                             {config.match_status === 'loading' ? '⏳...' : '✨ Auto-Match'}
                           </button>
                         </div>
                       </label>
 
-                      {/* 🌟 THE ALWAYS-VISIBLE STATUS BOX 🌟 */}
+                      {/* 🌟 THE STATUS BOX */}
                       <div style={{
-                        marginTop: '2px', 
-                        padding: '8px',
-                        background: config.match_status === 'error' ? '#f8d7da' : config.match_status === 'success' ? '#e3ffeb' : '#f1f3f5',
-                        color: config.match_status === 'error' ? '#842029' : config.match_status === 'success' ? '#0f5132' : '#868e96',
-                        borderRadius: '4px',
-                        fontSize: '12px',
+                        padding: '10px',
+                        background: config.match_status === 'error' ? '#fee2e2' : config.match_status === 'success' ? '#dcfce7' : '#ffffff',
+                        color: config.match_status === 'error' ? '#991b1b' : config.match_status === 'success' ? '#166534' : 'var(--text-muted)',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: '0.8rem',
                         border: '1px solid',
-                        borderColor: config.match_status === 'error' ? '#f5c2c7' : config.match_status === 'success' ? '#badbcc' : '#dee2e6',
-                        minHeight: '18px',
+                        borderColor: config.match_status === 'error' ? '#fca5a5' : config.match_status === 'success' ? '#86efac' : 'var(--border-color)',
                       }}>
                         {config.match_status === 'loading' && '⏳ Hunting for channel...'}
                         {config.match_status === 'error' && `❌ ${config.match_error}`}
@@ -138,25 +159,24 @@ function DroppableBoard({ board, mappedRepos, columns, repoConfigs, onConfigChan
                         {!config.match_status && 'ℹ️ Ready to auto-match...'}
                       </div>
 
-                      <div style={{ textAlign: 'center', fontSize: '12px', color: '#888', margin: '4px 0' }}>— OR —</div>
+                      <div style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', margin: '8px 0' }}>— OR —</div>
 
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                        <strong>Webhook URL (Fallback):</strong>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <strong style={{ color: 'var(--text-muted)' }}>Webhook URL (Fallback):</strong>
                         <input 
                           type="text" 
                           placeholder="Paste Webhook URL"
+                          className="input-control"
                           value={config.comm_webhook || ''}
                           onChange={(e) => onConfigChange(repoId, 'comm_webhook', e.target.value)}
-                          style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '12px' }}
                         />
                       </label>
 
                     </div>
                   )}
-
                 </div>
               ) : (
-                <small style={{ color: '#666' }}>Loading Basecamp columns...</small>
+                <small style={{ color: 'var(--text-muted)' }}>Loading Basecamp columns...</small>
               )}
             </div>
           );
@@ -181,7 +201,7 @@ export default function App() {
     GITHUB_TOKEN: '', BASECAMP_ACCOUNT_ID: '', BASECAMP_ACCESS_TOKEN: ''
   });
   const [basecampPeople, setBasecampPeople] = useState([]); 
-  const [teamMap, setTeamMap] = useState([{ github: '', basecamp_id: '' }]); // Start with one empty row
+  const [teamMap, setTeamMap] = useState([{ github: '', basecamp_id: '' }]);
 
   const handleDragEnd = async (event) => {
     const { active, over } = event;
@@ -288,15 +308,13 @@ export default function App() {
       });
     });
 
-    // 🌟 Extract valid team members
     const finalTeam = teamMap.filter(m => m.github.trim() !== '' && m.basecamp_id !== '');
 
     try {
-      // 🌟 Send BOTH projects and the team to the backend
-      await axios.post('https://tron-v2-3.onrender.com/api/admin/config', { 
-        projects: finalProjects, 
-        team: finalTeam 
-      });
+      await axios.post(`${API_BASE_URL}/api/admin/config`, { 
+    projects: finalProjects, 
+    team: finalTeam 
+    });
       alert('🎉 Configuration and Team Roster saved successfully!');
     } catch (error) {
       alert('❌ Failed to save configuration.');
@@ -313,7 +331,7 @@ export default function App() {
       setRepos(fetchedRepos);
 
         const boardRes = await axios.post('https://tron-v2-3.onrender.com/api/admin/boards', {
-            provider: 'basecamp',
+          provider: 'basecamp',
           accountId: credentials.BASECAMP_ACCOUNT_ID,
           accessToken: credentials.BASECAMP_ACCESS_TOKEN
       });
@@ -344,46 +362,52 @@ export default function App() {
   });
 
   return (
-    <div className="dashboard-container">
-      <header>
-        <h1>⚡ T.R.O.N. Enterprise Configurator</h1>
-        <div>
-          <button onClick={() => setShowSettings(!showSettings)} className="save-btn" style={{ background: '#6c757d', marginRight: '10px' }}>
+    <div className="container">
+      
+      {/* HEADER */}
+      <header className="config-header">
+        <div className="config-title">
+          <span style={{ color: '#f59e0b' }}>⚡</span> T.R.O.N. Enterprise Configurator
+        </div>
+        <div className="header-actions">
+          <button onClick={() => setShowSettings(!showSettings)} className="btn btn-secondary">
             ⚙️ Integrations Setup
           </button>
-          <button onClick={handleSave} className="save-btn">Save Routing Rules</button>
+          <button onClick={handleSave} className="btn btn-primary">Save Routing Rules</button>
         </div>
       </header>
 
+      {/* CREDENTIALS SETTINGS PANEL */}
       {showSettings && (
-        <div className="settings-panel" style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-          <h2>🔌 Connect Your Tools</h2>
-          <p>Enter your API tokens here. They will be saved securely to the backend.</p>
-          <form onSubmit={handleSaveCredentials} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+        <div className="card">
+          <h2 className="card-title">🔌 Connect Your Tools</h2>
+          <p className="card-description">Enter your API tokens here. They will be saved securely to the backend.</p>
+          <form onSubmit={handleSaveCredentials} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             
             <input type="password" placeholder="GitHub Personal Access Token" 
               onChange={e => setCredentials({...credentials, GITHUB_TOKEN: e.target.value})} 
-              style={{ gridColumn: 'span 2', padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} />
+              className="input-control" style={{ gridColumn: 'span 2' }} />
 
             <input type="text" placeholder="Basecamp Account ID" 
               onChange={e => setCredentials({...credentials, BASECAMP_ACCOUNT_ID: e.target.value})} 
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} />
+              className="input-control" />
             
             <input type="password" placeholder="Basecamp Access Token" 
               onChange={e => setCredentials({...credentials, BASECAMP_ACCESS_TOKEN: e.target.value})} 
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} />
+              className="input-control" />
 
-            <button type="submit" className="save-btn" style={{ gridColumn: 'span 2' }}>Connect Systems</button>
+            <button type="submit" className="btn btn-primary" style={{ gridColumn: 'span 2', justifyContent: 'center' }}>Connect Systems</button>
           </form>
         </div>
       )}
-      {/* 👥 THE IDENTITY MAPPING ROSTER */}
-      <div className="team-roster" style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-        <h2>👥 Team Identity Roster</h2>
-        <p style={{ color: '#555', marginBottom: '15px' }}>Map GitHub usernames to Basecamp profiles for auto-assignment and branch tracking.</p>
+
+      {/* TEAM IDENTITY ROSTER */}
+      <div className="card">
+        <h2 className="card-title">👥 Team Identity Roster</h2>
+        <p className="card-description">Map GitHub usernames to Basecamp profiles for auto-assignment and branch tracking.</p>
         
         {teamMap.map((member, index) => (
-          <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center' }}>
+          <div className="mapping-row" key={index}>
             <input 
               type="text" 
               placeholder="GitHub Username (e.g. 0mkar22)" 
@@ -393,9 +417,9 @@ export default function App() {
                 newMap[index].github = e.target.value;
                 setTeamMap(newMap);
               }}
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+              className="input-control"
             />
-            <span style={{ fontSize: '20px' }}>🔗</span>
+            <span className="link-icon">🔗</span>
             <select 
               value={member.basecamp_id}
               onChange={(e) => {
@@ -403,7 +427,7 @@ export default function App() {
                 newMap[index].basecamp_id = e.target.value;
                 setTeamMap(newMap);
               }}
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+              className="input-control"
             >
               <option value="">Select Basecamp User...</option>
               {basecampPeople.map(p => (
@@ -412,33 +436,38 @@ export default function App() {
             </select>
             <button 
               onClick={() => setTeamMap(teamMap.filter((_, i) => i !== index))}
-              style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', padding: '8px 12px', cursor: 'pointer' }}
+              className="btn btn-danger"
+              title="Remove Mapping"
             >✖</button>
           </div>
         ))}
         <button 
           onClick={() => setTeamMap([...teamMap, { github: '', basecamp_id: '' }])}
-          style={{ background: '#f8f9fa', color: '#333', border: '1px solid #ccc', borderRadius: '4px', padding: '8px 15px', cursor: 'pointer', marginTop: '10px' }}
+          className="btn btn-outline"
         >
           ➕ Add Team Member
         </button>
       </div>
 
+      {/* DRAG AND DROP GRID */}
       <DndContext onDragEnd={handleDragEnd}>
-        <div className="layout">
-          <div className="repo-column">
-            <h2>Unmapped Repositories</h2>
-            <div className="repo-list">
-              {unmappedRepos.map(repo => (
+        <div className="dashboard-grid">
+          
+          <div className="card">
+            <h2 className="card-title">📁 Unmapped Repositories</h2>
+            <p className="card-description">Repos detected by GitHub but not linked to a board.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {unmappedRepos.length === 0 ? <div className="empty-state">No unmapped repositories found.</div> : unmappedRepos.map(repo => (
                 <DraggableRepo key={repo.full_name} repo={repo} />
               ))}
             </div>
           </div>
 
-          <div className="board-column">
-            <h2>Project Management Boards</h2>
-            <div className="board-grid">
-              {boards.map(board => (
+          <div className="card">
+            <h2 className="card-title">📊 Project Management Boards</h2>
+            <p className="card-description">Active routing rules for your linked boards.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {boards.length === 0 ? <div className="empty-state">Select a repository to view board mappings.</div> : boards.map(board => (
                 <DroppableBoard 
                   key={board.id} 
                   board={board} 
@@ -451,6 +480,7 @@ export default function App() {
               ))}
             </div>
           </div>
+
         </div>
       </DndContext>
     </div>
