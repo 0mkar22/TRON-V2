@@ -238,7 +238,6 @@ router.post('/config', (req, res) => {
         // Build the final object to be converted to YAML
         const yamlData = {
             projects: projects,
-            // Only add the team block if there is actually team data
             ...(team && team.length > 0 && { team: team }) 
         };
 
