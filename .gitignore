@@ -3,3 +3,8 @@ node_modules/
 tron-daemon.exe
 tron.log
 .git/tron_task
+out
+dist
+node_modules
+.vscode-test/
+*.vsixs
