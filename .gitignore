@@ -8,3 +8,4 @@ dist
 node_modules
 .vscode-test/
 *.vsixs
+tron-vscode\oracleJdk-26
