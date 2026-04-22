@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
+const BasecampAdapter = require('../adapters/basecamp');
+
 // ==========================================
 // 1. FETCH GITHUB REPOSITORIES
 // ==========================================
@@ -307,7 +309,27 @@ router.post('/discord/match', async (req, res) => {
 });
 
 // ==========================================
-// 6. FETCH BASECAMP PEOPLE (FOR TEAM ROSTER)
+// 6. FETCH BASECAMP BOARDS 
+// ==========================================
+router.get('/basecamp/boards', async (req, res) => {
+    try {
+        // 2. Wrap the API call using your shiny new self-healing engine!
+        const response = await BasecampAdapter.executeWithRetry(() => 
+            axios.get(
+                `https://3.basecampapi.com/${process.env.BASECAMP_ACCOUNT_ID}/projects.json`,
+                BasecampAdapter.getBaseConfig()
+            )
+        );
+
+        res.json(response.data);
+    } catch (error) {
+        console.error('❌ [ADMIN] Basecamp API Error:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Failed to fetch Basecamp boards' });
+    }
+});
+
+// ==========================================
+// 7. FETCH BASECAMP PEOPLE (FOR TEAM ROSTER)
 // ==========================================
 router.post('/basecamp/people', async (req, res) => {
     const { accountId, accessToken } = req.body;
